@@ -1,0 +1,16 @@
+# Binaries
+/google_service_cli
+*.exe
+*.out
+
+# Credentials / secrets
+credentials.json
+token.json
+*.pem
+
+# OS
+.DS_Store
+
+# Test / coverage
+*.test
+coverage.out
