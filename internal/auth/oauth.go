@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"sync"
 
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
@@ -76,6 +77,7 @@ func (o *oauthProvider) Login(ctx context.Context, scopes []string) error {
 
 // savingTokenSource persists the token whenever it changes (e.g. after refresh).
 type savingTokenSource struct {
+	mu   sync.Mutex
 	src  oauth2.TokenSource
 	save func(*oauth2.Token) error
 	last *oauth2.Token
@@ -86,9 +88,14 @@ func (s *savingTokenSource) Token() (*oauth2.Token, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	if s.last == nil || t.AccessToken != s.last.AccessToken {
-		_ = s.save(t)
-		s.last = t
+		if err := s.save(t); err == nil {
+			s.last = t
+		}
 	}
 	return t, nil
 }
@@ -107,19 +114,32 @@ func loopbackCode(ctx context.Context, conf *oauth2.Config) (string, error) {
 	codeCh := make(chan string, 1)
 	errCh := make(chan error, 1)
 	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/callback" {
+			http.NotFound(w, r)
+			return
+		}
 		q := r.URL.Query()
 		if q.Get("state") != state {
 			http.Error(w, "state mismatch", http.StatusBadRequest)
-			errCh <- errors.New("state mismatch")
+			select {
+			case errCh <- errors.New("state mismatch"):
+			default:
+			}
 			return
 		}
 		if e := q.Get("error"); e != "" {
 			http.Error(w, e, http.StatusBadRequest)
-			errCh <- fmt.Errorf("authorization error: %s", e)
+			select {
+			case errCh <- fmt.Errorf("authorization error: %s", e):
+			default:
+			}
 			return
 		}
 		fmt.Fprintln(w, "Login successful. You can close this tab and return to the terminal.")
-		codeCh <- q.Get("code")
+		select {
+		case codeCh <- q.Get("code"):
+		default:
+		}
 	})}
 	go srv.Serve(ln)
 	defer srv.Shutdown(context.Background())
@@ -144,7 +164,9 @@ func randomState() string {
 	return hex.EncodeToString(b)
 }
 
-func openBrowser(url string) error {
+var openBrowser = defaultOpenBrowser
+
+func defaultOpenBrowser(url string) error {
 	var name string
 	var args []string
 	switch runtime.GOOS {
@@ -157,3 +179,4 @@ func openBrowser(url string) error {
 	}
 	return exec.Command(name, args...).Start()
 }
+
