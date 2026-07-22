@@ -79,17 +79,17 @@ func configAddCmd(d *service.Deps) *cobra.Command {
 }
 
 type profileList struct {
-	profiles []config.Profile
-	active   string
+	Profiles []config.Profile `json:"profiles"`
+	Active   string           `json:"active"`
 }
 
 func (p profileList) Headers() []string { return []string{"ACTIVE", "NAME", "AUTH"} }
 
 func (p profileList) Rows() [][]string {
-	rows := make([][]string, 0, len(p.profiles))
-	for _, pr := range p.profiles {
+	rows := make([][]string, 0, len(p.Profiles))
+	for _, pr := range p.Profiles {
 		marker := ""
-		if pr.Name == p.active {
+		if pr.Name == p.Active {
 			marker = "*"
 		}
 		rows = append(rows, []string{marker, pr.Name, pr.AuthType})
@@ -106,7 +106,7 @@ func configListCmd(d *service.Deps) *cobra.Command {
 			if p, err := d.Config.Active(); err == nil {
 				active = p.Name
 			}
-			return d.Out.Render(profileList{profiles: d.Config.List(), active: active})
+			return d.Out.Render(profileList{Profiles: d.Config.List(), Active: active})
 		},
 	}
 }

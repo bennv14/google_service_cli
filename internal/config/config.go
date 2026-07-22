@@ -17,11 +17,11 @@ var ErrNoActiveProfile = errors.New("no active profile; run 'gsvc config add'")
 
 // Profile bundles an auth mechanism, its credential path, and defaults.
 type Profile struct {
-	Name       string            `yaml:"-"`
-	AuthType   string            `yaml:"auth_type"`
-	ClientPath string            `yaml:"client_path,omitempty"`
-	KeyPath    string            `yaml:"key_path,omitempty"`
-	Defaults   map[string]string `yaml:"defaults,omitempty"`
+	Name       string            `yaml:"-" json:"name"`
+	AuthType   string            `yaml:"auth_type" json:"auth_type"`
+	ClientPath string            `yaml:"client_path,omitempty" json:"client_path,omitempty"`
+	KeyPath    string            `yaml:"key_path,omitempty" json:"key_path,omitempty"`
+	Defaults   map[string]string `yaml:"defaults,omitempty" json:"defaults,omitempty"`
 }
 
 // Store reads and writes profiles.
