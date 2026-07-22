@@ -1,6 +1,7 @@
 # Binaries
 /google_service_cli
 /gsvc
+/dist/
 *.exe
 *.out
 
