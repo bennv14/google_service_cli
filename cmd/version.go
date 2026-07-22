@@ -6,17 +6,23 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// version is the current build version of the CLI.
-const version = "0.1.0"
+// Set at build time via -ldflags "-X github.com/bennv/google_service_cli/cmd.version=..."
+var (
+	version = "dev"
+	commit  = "none"
+	date    = "unknown"
+)
 
-var versionCmd = &cobra.Command{
-	Use:   "version",
-	Short: "Print the version number",
-	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Printf("google_service_cli v%s\n", version)
-	},
+func versionString() string {
+	return fmt.Sprintf("gsvc %s (commit %s, built %s)", version, commit, date)
 }
 
-func init() {
-	rootCmd.AddCommand(versionCmd)
+func newVersionCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "version",
+		Short: "Print the version number",
+		Run: func(cmd *cobra.Command, args []string) {
+			fmt.Fprintln(cmd.OutOrStdout(), versionString())
+		},
+	}
 }
