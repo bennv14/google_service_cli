@@ -2,6 +2,7 @@ package chat
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -26,6 +27,12 @@ const (
 	pageSize = 1000
 )
 
+// maxPages is a runaway guard on the pagination loops below, not a Chat API
+// limit: the API imposes no page-count cap of its own. It exists so that a
+// server bug (or a hostile server) returning an endless stream of distinct
+// page tokens can't grow out's backing array without bound.
+const maxPages = 100
+
 // Client wraps the Chat v1 API. It is read-only by construction: no method here
 // calls a mutating endpoint.
 type Client struct{ svc *chatapi.Service }
@@ -45,7 +52,10 @@ func NewClient(ctx context.Context, hc *http.Client, opts ...option.ClientOption
 func (c *Client) ListSpaces(ctx context.Context) ([]*chatapi.Space, error) {
 	var out []*chatapi.Space
 	token := ""
-	for {
+	for page := 0; ; page++ {
+		if page >= maxPages {
+			return nil, fmt.Errorf("chat: list spaces exceeded %d pages; refusing to keep paging", maxPages)
+		}
 		call := c.svc.Spaces.List().Context(ctx).
 			PageSize(pageSize).
 			Fields("spaces(" + spaceFields + "),nextPageToken")
@@ -59,6 +69,9 @@ func (c *Client) ListSpaces(ctx context.Context) ([]*chatapi.Space, error) {
 		out = append(out, res.Spaces...)
 		if res.NextPageToken == "" {
 			return out, nil
+		}
+		if res.NextPageToken == token {
+			return nil, fmt.Errorf("chat: list spaces got a repeating page token %q; refusing to keep paging", token)
 		}
 		token = res.NextPageToken
 	}
@@ -80,7 +93,10 @@ func (c *Client) FindDirectMessage(ctx context.Context, userRef string) (*chatap
 func (c *Client) ListMessages(ctx context.Context, parent, filter string, limit int) ([]*chatapi.Message, error) {
 	var out []*chatapi.Message
 	token := ""
-	for {
+	for page := 0; ; page++ {
+		if page >= maxPages {
+			return nil, fmt.Errorf("chat: list messages exceeded %d pages; refusing to keep paging", maxPages)
+		}
 		size := int64(pageSize)
 		if limit > 0 && int64(limit-len(out)) < size {
 			size = int64(limit - len(out))
@@ -104,6 +120,9 @@ func (c *Client) ListMessages(ctx context.Context, parent, filter string, limit 
 				out = out[:limit]
 			}
 			return out, nil
+		}
+		if res.NextPageToken == token {
+			return nil, fmt.Errorf("chat: list messages got a repeating page token %q; refusing to keep paging", token)
 		}
 		token = res.NextPageToken
 	}
@@ -134,7 +153,10 @@ func (c *Client) SpaceReadState(ctx context.Context, spaceName string) (string, 
 func (c *Client) ListMembers(ctx context.Context, spaceName string) ([]*chatapi.Membership, error) {
 	var out []*chatapi.Membership
 	token := ""
-	for {
+	for page := 0; ; page++ {
+		if page >= maxPages {
+			return nil, fmt.Errorf("chat: list members exceeded %d pages; refusing to keep paging", maxPages)
+		}
 		call := c.svc.Spaces.Members.List(spaceName).Context(ctx).
 			PageSize(pageSize).
 			Fields("memberships(name,member(name,displayName,type)),nextPageToken")
@@ -148,6 +170,9 @@ func (c *Client) ListMembers(ctx context.Context, spaceName string) ([]*chatapi.
 		out = append(out, res.Memberships...)
 		if res.NextPageToken == "" {
 			return out, nil
+		}
+		if res.NextPageToken == token {
+			return nil, fmt.Errorf("chat: list members got a repeating page token %q; refusing to keep paging", token)
 		}
 		token = res.NextPageToken
 	}

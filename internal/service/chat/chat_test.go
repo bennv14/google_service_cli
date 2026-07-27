@@ -3,8 +3,10 @@ package chat
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"google.golang.org/api/option"
@@ -69,6 +71,74 @@ func TestListSpacesPaginates(t *testing.T) {
 	}
 	if len(spaces) != 2 || spaces[0].Name != "spaces/A" || spaces[1].DisplayName != "Beta" {
 		t.Fatalf("ListSpaces() = %+v", spaces)
+	}
+}
+
+func TestListSpacesStopsOnRepeatingPageToken(t *testing.T) {
+	var calls int
+	cl := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"spaces":        []map[string]any{{"name": "spaces/A"}},
+			"nextPageToken": "same-tok",
+		})
+	})
+
+	_, err := cl.ListSpaces(context.Background())
+	if err == nil {
+		t.Fatal("expected an error for a repeating page token, got nil")
+	}
+	if !strings.Contains(err.Error(), "repeating page token") {
+		t.Fatalf("err = %q, want mention of a repeating page token", err.Error())
+	}
+	if calls != 2 {
+		t.Fatalf("expected exactly 2 requests before detecting the repeat, got %d", calls)
+	}
+}
+
+func TestListSpacesStopsAtMaxPages(t *testing.T) {
+	var calls int
+	cl := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"spaces":        []map[string]any{{"name": "spaces/A"}},
+			"nextPageToken": fmt.Sprintf("tok-%d", calls),
+		})
+	})
+
+	_, err := cl.ListSpaces(context.Background())
+	if err == nil {
+		t.Fatal("expected an error once the page cap is exceeded, got nil")
+	}
+	if !strings.Contains(err.Error(), fmt.Sprintf("%d pages", maxPages)) {
+		t.Fatalf("err = %q, want mention of the %d page cap", err.Error(), maxPages)
+	}
+	if calls != maxPages {
+		t.Fatalf("expected exactly %d requests, got %d", maxPages, calls)
+	}
+}
+
+func TestListMessagesStopsOnRepeatingPageToken(t *testing.T) {
+	var calls int
+	cl := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"messages": []map[string]any{
+				{"name": "spaces/A/messages/t.1", "text": "one", "createTime": "2026-07-20T01:00:00Z"},
+			},
+			"nextPageToken": "same-tok",
+		})
+	})
+
+	_, err := cl.ListMessages(context.Background(), "spaces/A", "", 0)
+	if err == nil {
+		t.Fatal("expected an error for a repeating page token, got nil")
+	}
+	if !strings.Contains(err.Error(), "repeating page token") {
+		t.Fatalf("err = %q, want mention of a repeating page token", err.Error())
+	}
+	if calls != 2 {
+		t.Fatalf("expected exactly 2 requests before detecting the repeat, got %d", calls)
 	}
 }
 
