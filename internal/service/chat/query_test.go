@@ -2,6 +2,8 @@ package chat
 
 import (
 	"context"
+	"errors"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -298,5 +300,390 @@ func TestResolveSpaceNotFound(t *testing.T) {
 	_, err := NewEngine(api).resolveSpace(context.Background(), "Nope")
 	if err == nil || !strings.Contains(err.Error(), "Nope") {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+// rawMsg builds a chat/v1 message the way the API returns one.
+func rawMsg(name, thread, senderID, senderName, text, createTime string, mentions ...string) *chatapi.Message {
+	m := &chatapi.Message{
+		Name:       name,
+		Thread:     &chatapi.Thread{Name: thread},
+		Sender:     &chatapi.User{Name: senderID, DisplayName: senderName, Type: "HUMAN"},
+		Text:       text,
+		CreateTime: createTime,
+	}
+	for _, u := range mentions {
+		m.Annotations = append(m.Annotations, &chatapi.Annotation{
+			Type:        "USER_MENTION",
+			UserMention: &chatapi.UserMentionMetadata{Type: "MENTION", User: &chatapi.User{Name: u}},
+		})
+	}
+	return m
+}
+
+func TestRunFansOutAndOrdersSpacesByRecency(t *testing.T) {
+	api := &fakeAPI{
+		t: t,
+		spaces: []*chatapi.Space{
+			{Name: "spaces/A", DisplayName: "Alpha", SpaceType: "SPACE", SpaceThreadingState: "THREADED_MESSAGES"},
+			{Name: "spaces/B", DisplayName: "Beta", SpaceType: "SPACE", SpaceThreadingState: "THREADED_MESSAGES"},
+		},
+		messages: func(parent, _ string, _ int) ([]*chatapi.Message, error) {
+			switch parent {
+			case "spaces/A":
+				return []*chatapi.Message{
+					rawMsg("spaces/A/messages/t1.t1", "spaces/A/threads/t1", "users/1", "Linh", "old", "2026-07-20T01:00:00Z"),
+				}, nil
+			case "spaces/B":
+				return []*chatapi.Message{
+					rawMsg("spaces/B/messages/t9.t9", "spaces/B/threads/t9", "users/2", "Huy", "new", "2026-07-25T09:00:00Z"),
+				}, nil
+			}
+			return nil, nil
+		},
+	}
+
+	res, err := NewEngine(api).Run(context.Background(), Query{Now: fixedTime(t, "2026-07-26T00:00:00Z")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Spaces) != 2 {
+		t.Fatalf("got %d spaces", len(res.Spaces))
+	}
+	if res.Spaces[0].Space.Name != "Beta" {
+		t.Fatalf("most recently active space must come first, got %q", res.Spaces[0].Space.Name)
+	}
+	if res.Summary.Spaces != 2 || res.Summary.Messages != 2 || res.Summary.Threads != 2 {
+		t.Fatalf("summary = %+v", res.Summary)
+	}
+}
+
+func TestRunAppliesDefaultWindowWhenScanningEverySpace(t *testing.T) {
+	now := fixedTime(t, "2026-07-26T00:00:00Z")
+	var gotFilter string
+	api := &fakeAPI{
+		t:      t,
+		spaces: []*chatapi.Space{{Name: "spaces/A", DisplayName: "Alpha"}},
+		messages: func(_, filter string, _ int) ([]*chatapi.Message, error) {
+			gotFilter = filter
+			return nil, nil
+		},
+	}
+	if _, err := NewEngine(api).Run(context.Background(), Query{Now: now}); err != nil {
+		t.Fatal(err)
+	}
+	if want := `create_time > "2026-07-19T00:00:00Z"`; gotFilter != want {
+		t.Fatalf("filter = %q, want %q", gotFilter, want)
+	}
+}
+
+func TestRunSkipsDefaultWindowForSingleSpaceAndForUnread(t *testing.T) {
+	now := fixedTime(t, "2026-07-26T00:00:00Z")
+
+	var singleFilter string
+	single := &fakeAPI{
+		t:        t,
+		getSpace: func(name string) (*chatapi.Space, error) { return &chatapi.Space{Name: name}, nil },
+		messages: func(_, filter string, _ int) ([]*chatapi.Message, error) {
+			singleFilter = filter
+			return nil, nil
+		},
+	}
+	if _, err := NewEngine(single).Run(context.Background(), Query{Space: "spaces/A", Now: now}); err != nil {
+		t.Fatal(err)
+	}
+	if singleFilter != "" {
+		t.Fatalf("an explicit --space must not get a default window, got %q", singleFilter)
+	}
+
+	var unreadFilter string
+	unread := &fakeAPI{
+		t:         t,
+		spaces:    []*chatapi.Space{{Name: "spaces/A"}},
+		readState: readStateFor(map[string]string{"spaces/A": "2026-07-01T00:00:00Z"}),
+		messages: func(_, filter string, _ int) ([]*chatapi.Message, error) {
+			unreadFilter = filter
+			return nil, nil
+		},
+	}
+	if _, err := NewEngine(unread).Run(context.Background(), Query{UnreadOnly: true, Now: now}); err != nil {
+		t.Fatal(err)
+	}
+	if want := `create_time > "2026-07-01T00:00:00Z"`; unreadFilter != want {
+		t.Fatalf("--unread must use lastReadTime, not the 7-day default: got %q, want %q", unreadFilter, want)
+	}
+}
+
+func TestRunUsesPerSpaceReadMarkers(t *testing.T) {
+	api := &fakeAPI{
+		t: t,
+		spaces: []*chatapi.Space{
+			{Name: "spaces/A", DisplayName: "Alpha"},
+			{Name: "spaces/B", DisplayName: "Beta"},
+		},
+		readState: readStateFor(map[string]string{
+			"spaces/A": "2026-07-20T00:00:00Z",
+			"spaces/B": "2026-07-24T00:00:00Z",
+		}),
+		messages: func(string, string, int) ([]*chatapi.Message, error) { return nil, nil },
+	}
+	if _, err := NewEngine(api).Run(context.Background(), Query{UnreadOnly: true, Now: fixedTime(t, "2026-07-26T00:00:00Z")}); err != nil {
+		t.Fatal(err)
+	}
+	fa, _ := api.msgFilters.Load("spaces/A")
+	fb, _ := api.msgFilters.Load("spaces/B")
+	if fa != `create_time > "2026-07-20T00:00:00Z"` || fb != `create_time > "2026-07-24T00:00:00Z"` {
+		t.Fatalf("each space needs its own marker; got A=%v B=%v", fa, fb)
+	}
+}
+
+func TestUnreadExcludesYourOwnMessages(t *testing.T) {
+	api := &fakeAPI{
+		t:         t,
+		spaces:    []*chatapi.Space{{Name: "spaces/A", DisplayName: "Alpha"}},
+		readState: readStateFor(map[string]string{"spaces/A": "2026-07-25T00:00:00Z"}),
+		messages: func(string, string, int) ([]*chatapi.Message, error) {
+			return []*chatapi.Message{
+				rawMsg("spaces/A/messages/t1.t1", "spaces/A/threads/t1", "users/1", "Linh", "theirs", "2026-07-25T09:00:00Z"),
+				rawMsg("spaces/A/messages/t1.t2", "spaces/A/threads/t1", meUser, "Ben", "mine", "2026-07-25T09:05:00Z"),
+			}, nil
+		},
+	}
+	res, err := NewEngine(api).Run(context.Background(), Query{UnreadOnly: true, Now: fixedTime(t, "2026-07-26T00:00:00Z")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Summary.Messages != 1 {
+		t.Fatalf("your own message must not count as unread: %+v", res.Summary)
+	}
+	got := res.Spaces[0].Threads[0].Messages[0]
+	if got.Text != "theirs" || !got.Unread {
+		t.Fatalf("message = %+v", got)
+	}
+	if res.Spaces[0].Space.UnreadCount != 1 {
+		t.Fatalf("UnreadCount = %d", res.Spaces[0].Space.UnreadCount)
+	}
+}
+
+func TestMentionsMeFiltersClientSide(t *testing.T) {
+	api := &fakeAPI{
+		t:         t,
+		spaces:    []*chatapi.Space{{Name: "spaces/A", DisplayName: "Alpha"}},
+		readState: readStateFor(nil),
+		messages: func(string, string, int) ([]*chatapi.Message, error) {
+			return []*chatapi.Message{
+				rawMsg("spaces/A/messages/t1.t1", "spaces/A/threads/t1", "users/1", "Linh", "hi all", "2026-07-25T09:00:00Z"),
+				rawMsg("spaces/A/messages/t1.t2", "spaces/A/threads/t1", "users/1", "Linh", "hi ben", "2026-07-25T09:01:00Z", meUser),
+				rawMsg("spaces/A/messages/t1.t3", "spaces/A/threads/t1", "users/1", "Linh", "hi huy", "2026-07-25T09:02:00Z", "users/999"),
+			}, nil
+		},
+	}
+	res, err := NewEngine(api).Run(context.Background(), Query{MentionsMe: true, Now: fixedTime(t, "2026-07-26T00:00:00Z")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Summary.Messages != 1 {
+		t.Fatalf("expected 1 message, got %+v", res.Summary)
+	}
+	m := res.Spaces[0].Threads[0].Messages[0]
+	if m.Text != "hi ben" || !m.MentionsMe || len(m.Mentions) != 1 {
+		t.Fatalf("message = %+v", m)
+	}
+}
+
+func TestThreadIsPartialWhenItsHeadIsOutsideTheWindow(t *testing.T) {
+	api := &fakeAPI{
+		t:      t,
+		spaces: []*chatapi.Space{{Name: "spaces/A", DisplayName: "Alpha"}},
+		messages: func(string, string, int) ([]*chatapi.Message, error) {
+			return []*chatapi.Message{
+				// t1 includes its head (mid == tid); t2 does not.
+				rawMsg("spaces/A/messages/t1.t1", "spaces/A/threads/t1", "users/1", "Linh", "start", "2026-07-25T09:00:00Z"),
+				rawMsg("spaces/A/messages/t2.zz", "spaces/A/threads/t2", "users/2", "Huy", "tail", "2026-07-25T10:00:00Z"),
+			}, nil
+		},
+	}
+	res, err := NewEngine(api).Run(context.Background(), Query{Now: fixedTime(t, "2026-07-26T00:00:00Z")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	byID := map[string]ThreadInfo{}
+	for _, tg := range res.Spaces[0].Threads {
+		byID[tg.Thread.ID] = tg.Thread
+	}
+	if byID["spaces/A/threads/t1"].Partial {
+		t.Error("t1 has its head and must not be partial")
+	}
+	if !byID["spaces/A/threads/t2"].Partial {
+		t.Error("t2 is missing its head and must be partial")
+	}
+}
+
+func TestLimitCutsNewestFirstAcrossAllSpaces(t *testing.T) {
+	api := &fakeAPI{
+		t: t,
+		spaces: []*chatapi.Space{
+			{Name: "spaces/A", DisplayName: "Alpha"},
+			{Name: "spaces/B", DisplayName: "Beta"},
+		},
+		messages: func(parent, _ string, _ int) ([]*chatapi.Message, error) {
+			switch parent {
+			case "spaces/A":
+				return []*chatapi.Message{
+					rawMsg("spaces/A/messages/t1.t1", "spaces/A/threads/t1", "users/1", "Linh", "a-old", "2026-07-20T00:00:00Z"),
+					rawMsg("spaces/A/messages/t1.t2", "spaces/A/threads/t1", "users/1", "Linh", "a-new", "2026-07-25T00:00:00Z"),
+				}, nil
+			default:
+				return []*chatapi.Message{
+					rawMsg("spaces/B/messages/t3.t3", "spaces/B/threads/t3", "users/2", "Huy", "b-newest", "2026-07-25T12:00:00Z"),
+				}, nil
+			}
+		},
+	}
+	res, err := NewEngine(api).Run(context.Background(), Query{Limit: 2, Now: fixedTime(t, "2026-07-26T00:00:00Z")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Summary.Messages != 2 {
+		t.Fatalf("limit is a total across spaces, got %+v", res.Summary)
+	}
+	var texts []string
+	for _, sg := range res.Spaces {
+		for _, tg := range sg.Threads {
+			for _, m := range tg.Messages {
+				texts = append(texts, m.Text)
+			}
+		}
+	}
+	sort.Strings(texts)
+	if len(texts) != 2 || texts[0] != "a-new" || texts[1] != "b-newest" {
+		t.Fatalf("kept %v, want the two newest", texts)
+	}
+}
+
+func TestThreadLimitCutsThreadsNotMessages(t *testing.T) {
+	api := &fakeAPI{
+		t:      t,
+		spaces: []*chatapi.Space{{Name: "spaces/A", DisplayName: "Alpha"}},
+		messages: func(string, string, int) ([]*chatapi.Message, error) {
+			return []*chatapi.Message{
+				rawMsg("spaces/A/messages/t1.t1", "spaces/A/threads/t1", "users/1", "Linh", "old-1", "2026-07-20T00:00:00Z"),
+				rawMsg("spaces/A/messages/t1.t2", "spaces/A/threads/t1", "users/1", "Linh", "old-2", "2026-07-20T00:01:00Z"),
+				rawMsg("spaces/A/messages/t2.t2", "spaces/A/threads/t2", "users/2", "Huy", "new-1", "2026-07-25T00:00:00Z"),
+			}, nil
+		},
+	}
+	res, err := NewEngine(api).Run(context.Background(), Query{ThreadLimit: 1, Now: fixedTime(t, "2026-07-26T00:00:00Z")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Summary.Threads != 1 || res.Summary.Messages != 1 {
+		t.Fatalf("summary = %+v", res.Summary)
+	}
+	if res.Spaces[0].Threads[0].Thread.ID != "spaces/A/threads/t2" {
+		t.Fatalf("kept the wrong thread: %+v", res.Spaces[0].Threads[0].Thread)
+	}
+}
+
+func TestOneFailingSpaceDoesNotKillTheCommand(t *testing.T) {
+	api := &fakeAPI{
+		t: t,
+		spaces: []*chatapi.Space{
+			{Name: "spaces/BAD", DisplayName: "Broken"},
+			{Name: "spaces/OK", DisplayName: "Fine"},
+		},
+		messages: func(parent, _ string, _ int) ([]*chatapi.Message, error) {
+			if parent == "spaces/BAD" {
+				return nil, errors.New("403 forbidden")
+			}
+			return []*chatapi.Message{
+				rawMsg("spaces/OK/messages/t1.t1", "spaces/OK/threads/t1", "users/1", "Linh", "still here", "2026-07-25T00:00:00Z"),
+			}, nil
+		},
+	}
+	res, err := NewEngine(api).Run(context.Background(), Query{Now: fixedTime(t, "2026-07-26T00:00:00Z")})
+	if err != nil {
+		t.Fatalf("one bad space must not fail the whole run: %v", err)
+	}
+	if len(res.Spaces) != 1 || res.Spaces[0].Space.Name != "Fine" {
+		t.Fatalf("spaces = %+v", res.Spaces)
+	}
+	if len(res.Errors) != 1 || res.Errors[0].SpaceID != "spaces/BAD" {
+		t.Fatalf("errors = %+v", res.Errors)
+	}
+}
+
+func TestDMNameComesFromTheOtherParticipant(t *testing.T) {
+	api := &fakeAPI{
+		t: t,
+		spaces: []*chatapi.Space{
+			{Name: "spaces/DM1", SpaceType: "DIRECT_MESSAGE", SpaceThreadingState: "UNTHREADED_MESSAGES"},
+		},
+		readState: readStateFor(nil),
+		messages: func(string, string, int) ([]*chatapi.Message, error) {
+			return []*chatapi.Message{
+				rawMsg("spaces/DM1/messages/t1.t1", "spaces/DM1/threads/t1", meUser, "Ben", "mine", "2026-07-25T09:00:00Z"),
+				rawMsg("spaces/DM1/messages/t2.t2", "spaces/DM1/threads/t2", "users/1", "Linh Tran", "theirs", "2026-07-25T09:01:00Z"),
+			}, nil
+		},
+	}
+	res, err := NewEngine(api).Run(context.Background(), Query{UnreadOnly: false, MentionsMe: false, Now: fixedTime(t, "2026-07-26T00:00:00Z")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Spaces[0].Space.Name != "Linh Tran" {
+		t.Fatalf("DM name = %q, want the other participant", res.Spaces[0].Space.Name)
+	}
+}
+
+func TestDMNameFallsBackToMembersWhenOnlyOwnMessagesAreInWindow(t *testing.T) {
+	api := &fakeAPI{
+		t: t,
+		spaces: []*chatapi.Space{
+			{Name: "spaces/DM1", SpaceType: "DIRECT_MESSAGE"},
+		},
+		readState: readStateFor(nil),
+		messages: func(string, string, int) ([]*chatapi.Message, error) {
+			return []*chatapi.Message{
+				rawMsg("spaces/DM1/messages/t1.t1", "spaces/DM1/threads/t1", meUser, "Ben", "mine", "2026-07-25T09:00:00Z"),
+			}, nil
+		},
+		members: func(string) ([]*chatapi.Membership, error) {
+			return []*chatapi.Membership{
+				{Member: &chatapi.User{Name: meUser, DisplayName: "Ben"}},
+				{Member: &chatapi.User{Name: "users/1", DisplayName: "Linh Tran"}},
+			}, nil
+		},
+	}
+	// --unread is what resolves our own ID, which the members fallback needs.
+	res, err := NewEngine(api).Run(context.Background(), Query{MentionsMe: false, UnreadOnly: false, Now: fixedTime(t, "2026-07-26T00:00:00Z")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Spaces[0].Space.Name != "Linh Tran" {
+		t.Fatalf("DM name = %q", res.Spaces[0].Space.Name)
+	}
+}
+
+func TestSpaceTypeFilterLimitsTheScan(t *testing.T) {
+	api := &fakeAPI{
+		t: t,
+		spaces: []*chatapi.Space{
+			{Name: "spaces/A", DisplayName: "Alpha", SpaceType: "SPACE"},
+			{Name: "spaces/DM1", SpaceType: "DIRECT_MESSAGE"},
+		},
+		messages: func(parent string, _ string, _ int) ([]*chatapi.Message, error) {
+			if parent != "spaces/A" {
+				t.Errorf("scanned %q despite --type space", parent)
+			}
+			return nil, nil
+		},
+	}
+	res, err := NewEngine(api).Run(context.Background(), Query{SpaceTypes: []string{"space"}, Now: fixedTime(t, "2026-07-26T00:00:00Z")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Summary.Spaces != 1 {
+		t.Fatalf("summary.Spaces = %d, want 1", res.Summary.Spaces)
 	}
 }
