@@ -14,7 +14,9 @@ import (
 
 // Deps is the shared runtime context, populated by cmd/root.go in
 // PersistentPreRunE and shared by pointer with every command.
-// Services should rely only on Config, Out, and NewClient.
+// Most services should rely only on Config, Out, and NewClient; a command
+// with a different natural default output format may use NewOut/OutputExplicit
+// to build its own writer instead of using Out directly.
 type Deps struct {
 	Config    config.Store
 	Profile   config.Profile

@@ -42,6 +42,14 @@ func serviceScopes(svcs []service.Service) []string {
 // buildRootCmd assembles the root command, its global flags, the shared deps,
 // and every subcommand. It is used by Execute and by tests.
 func buildRootCmd() *cobra.Command {
+	root, _ := buildRootCmdWithDeps()
+	return root
+}
+
+// buildRootCmdWithDeps is buildRootCmd but also returns the *service.Deps
+// instance the command populates in PersistentPreRunE, so tests can observe
+// the result of real flag parsing (e.g. OutputFormat/OutputExplicit).
+func buildRootCmdWithDeps() (*cobra.Command, *service.Deps) {
 	var (
 		profileFlag string
 		outputFlag  string
@@ -75,7 +83,7 @@ various Google services (Drive, Sheets, Gmail, ...).`,
 	for _, s := range services {
 		root.AddCommand(s.Command(deps))
 	}
-	return root
+	return root, deps
 }
 
 // populateDeps fills the shared deps from flags and on-disk config.

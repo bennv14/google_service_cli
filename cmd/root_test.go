@@ -97,3 +97,39 @@ func (textOnly) Text(w io.Writer) error {
 	_, err := io.WriteString(w, "hi")
 	return err
 }
+
+func TestOutputExplicitFlagWiring(t *testing.T) {
+	t.Run("unset", func(t *testing.T) {
+		t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+		root, deps := buildRootCmdWithDeps()
+		var buf bytes.Buffer
+		root.SetOut(&buf)
+		root.SetArgs([]string{"version"})
+		if err := root.Execute(); err != nil {
+			t.Fatal(err)
+		}
+		if deps.OutputExplicit {
+			t.Fatal("OutputExplicit = true, want false when --output not passed")
+		}
+		if deps.OutputFormat != "table" {
+			t.Fatalf("OutputFormat = %q, want %q", deps.OutputFormat, "table")
+		}
+	})
+
+	t.Run("set", func(t *testing.T) {
+		t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+		root, deps := buildRootCmdWithDeps()
+		var buf bytes.Buffer
+		root.SetOut(&buf)
+		root.SetArgs([]string{"-o", "json", "version"})
+		if err := root.Execute(); err != nil {
+			t.Fatal(err)
+		}
+		if !deps.OutputExplicit {
+			t.Fatal("OutputExplicit = false, want true when --output passed")
+		}
+		if deps.OutputFormat != "json" {
+			t.Fatalf("OutputFormat = %q, want %q", deps.OutputFormat, "json")
+		}
+	})
+}

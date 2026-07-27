@@ -1,4 +1,4 @@
-// Package output renders command results as a human table or JSON.
+// Package output renders command results as a human table, JSON, or free-form text.
 package output
 
 import (
