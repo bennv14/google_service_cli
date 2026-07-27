@@ -233,3 +233,64 @@ func TestEmptyResultRendersNothing(t *testing.T) {
 		t.Fatalf("empty result should print nothing, got %q", buf.String())
 	}
 }
+
+// TestTextThreadedSpaceWithNoThreadsHasNoDanglingConnector covers a threaded
+// space whose Threads list is empty: the header must not leave a "│"
+// connector pointing at nothing.
+func TestTextThreadedSpaceWithNoThreadsHasNoDanglingConnector(t *testing.T) {
+	r := Result{Spaces: []SpaceGroup{{
+		Space: SpaceInfo{
+			ID: "spaces/A", Name: "Alpha", Type: "SPACE",
+			Threading: "THREADED_MESSAGES",
+			Link:      "https://chat.google.com/u/0/app/chat/A",
+		},
+		Threads: nil,
+	}}}
+	var buf bytes.Buffer
+	if err := r.Text(&buf); err != nil {
+		t.Fatal(err)
+	}
+	want := "◆ Alpha                                                            0 threads\n"
+	if buf.String() != want {
+		t.Fatalf("empty-threads output mismatch\n--- got ---\n%s\n--- want ---\n%s", buf.String(), want)
+	}
+	if strings.Contains(buf.String(), "│") {
+		t.Fatalf("a space with no threads must not print a dangling connector:\n%q", buf.String())
+	}
+}
+
+// TestTextThreadWithNoMessagesHasNoDanglingConnector covers a thread whose
+// Messages list is empty: the thread line must not leave a "│" connector
+// pointing at nothing beneath it.
+func TestTextThreadWithNoMessagesHasNoDanglingConnector(t *testing.T) {
+	r := Result{Spaces: []SpaceGroup{{
+		Space: SpaceInfo{
+			ID: "spaces/A", Name: "Alpha", Type: "SPACE",
+			Threading: "THREADED_MESSAGES",
+			Link:      "https://chat.google.com/u/0/app/chat/A",
+		},
+		Threads: []ThreadGroup{
+			{
+				Thread: ThreadInfo{
+					ID:   "spaces/A/threads/t1",
+					Link: "https://chat.google.com/room/A/t1/t1",
+				},
+				Messages: nil,
+			},
+		},
+	}}}
+	var buf bytes.Buffer
+	if err := r.Text(&buf); err != nil {
+		t.Fatal(err)
+	}
+	want := "" +
+		"◆ Alpha                                                             1 thread\n" +
+		"│\n" +
+		"└─▸ t1                                                                0 msgs\n"
+	if buf.String() != want {
+		t.Fatalf("empty-messages output mismatch\n--- got ---\n%s\n--- want ---\n%s", buf.String(), want)
+	}
+	if strings.Contains(buf.String(), "   │") {
+		t.Fatalf("a thread with no messages must not print a dangling connector:\n%q", buf.String())
+	}
+}

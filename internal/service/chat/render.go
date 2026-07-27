@@ -112,6 +112,10 @@ func showThreads(sg SpaceGroup, o RenderOpts) bool {
 
 func renderSpace(w io.Writer, sg SpaceGroup, o RenderOpts) {
 	threaded := showThreads(sg, o)
+	msgs := allMessages(sg)
+	// hasChildren tells the header whether a thread or message actually
+	// follows, so the "│" connector never dangles over an empty level.
+	hasChildren := threaded && len(sg.Threads) > 0 || !threaded && len(msgs) > 0
 
 	if o.Group != "thread" {
 		label := "◆ " + sg.Space.Name
@@ -119,11 +123,13 @@ func renderSpace(w io.Writer, sg SpaceGroup, o RenderOpts) {
 		if o.ShowLinks && sg.Space.Link != "" {
 			fmt.Fprintf(w, "  %s\n", sg.Space.Link)
 		}
-		fmt.Fprintln(w, "│")
+		if hasChildren {
+			fmt.Fprintln(w, "│")
+		}
 	}
 
 	if !threaded {
-		renderMessages(w, allMessages(sg), "", o)
+		renderMessages(w, msgs, "", o)
 		return
 	}
 	for i, tg := range sg.Threads {
@@ -144,7 +150,11 @@ func renderThread(w io.Writer, tg ThreadGroup, last bool, o RenderOpts) {
 	if o.ShowLinks && tg.Thread.Link != "" {
 		fmt.Fprintf(w, "%s%s\n", cont, tg.Thread.Link)
 	}
-	fmt.Fprintf(w, "%s│\n", cont)
+	// Only draw the connector down to the messages when there are any;
+	// an empty thread must not leave a dangling "│".
+	if len(tg.Messages) > 0 {
+		fmt.Fprintf(w, "%s│\n", cont)
+	}
 	renderMessages(w, tg.Messages, cont, o)
 }
 
