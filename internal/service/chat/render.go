@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/bennv/google_service_cli/internal/output"
 )
 
 const (
@@ -82,6 +84,14 @@ func writeRow(w io.Writer, prefix string, left, right seg) {
 	}
 	fmt.Fprintln(w)
 }
+
+// These pin Result and SpaceList to output.TextView at compile time, so a
+// signature drift on either Text method fails the build instead of surfacing
+// as a runtime "cannot render as text" error.
+var (
+	_ output.TextView = Result{}
+	_ output.TextView = SpaceList{}
+)
 
 // Text renders the result as a tree: space → thread → message → body.
 func (r Result) Text(w io.Writer) error {
