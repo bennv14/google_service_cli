@@ -4,9 +4,9 @@ import "testing"
 
 func TestSplitMessageName(t *testing.T) {
 	cases := []struct {
-		in                string
-		sid, tid, mid     string
-		ok                bool
+		in            string
+		sid, tid, mid string
+		ok            bool
 	}{
 		{"spaces/AAQAlS_sfCg/messages/qeQhBvDA5Os.yr7GQKDADuw", "AAQAlS_sfCg", "qeQhBvDA5Os", "yr7GQKDADuw", true},
 		{"spaces/AAQAlS_sfCg/messages/qeQhBvDA5Os.qeQhBvDA5Os", "AAQAlS_sfCg", "qeQhBvDA5Os", "qeQhBvDA5Os", true},
