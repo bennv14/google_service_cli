@@ -21,10 +21,17 @@ type Deps struct {
 	Tokens    auth.TokenStore
 	Out       output.Writer
 	NewClient func(ctx context.Context, scopes ...string) (*http.Client, error)
+
+	// Scopes is the union of every registered service's OAuth scopes,
+	// used by `gsvc auth login`.
+	Scopes []string
 }
 
 // Service is one Google service's command subtree.
 type Service interface {
 	Name() string
+	// Scopes are the OAuth scopes this service needs; `gsvc auth login`
+	// requests the union across all registered services.
+	Scopes() []string
 	Command(d *Deps) *cobra.Command
 }

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 
 	"github.com/spf13/cobra"
 
@@ -17,6 +18,26 @@ import (
 	"github.com/bennv/google_service_cli/internal/service"
 	"github.com/bennv/google_service_cli/internal/service/drive"
 )
+
+// services is the service registry. Adding a service here wires up both its
+// command subtree and its OAuth scopes.
+var services = []service.Service{drive.New()}
+
+// serviceScopes returns the deduplicated, sorted union of every service's scopes.
+func serviceScopes(svcs []service.Service) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, s := range svcs {
+		for _, sc := range s.Scopes() {
+			if !seen[sc] {
+				seen[sc] = true
+				out = append(out, sc)
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
+}
 
 // buildRootCmd assembles the root command, its global flags, the shared deps,
 // and every subcommand. It is used by Execute and by tests.
@@ -50,7 +71,7 @@ various Google services (Drive, Sheets, Gmail, ...).`,
 	root.AddCommand(newConfigCmd(deps))
 
 	// Registry: each service contributes its own subtree. Add new services here.
-	for _, s := range []service.Service{drive.New()} {
+	for _, s := range services {
 		root.AddCommand(s.Command(deps))
 	}
 	return root
@@ -72,6 +93,7 @@ func populateDeps(deps *service.Deps, profileFlag, outputFlag string, out io.Wri
 
 	deps.Config = store
 	deps.Tokens = tokens
+	deps.Scopes = serviceScopes(services)
 	deps.Out = output.NewWriter(outputFlag, out)
 
 	prof, perr := selectedProfile(store, profileFlag)

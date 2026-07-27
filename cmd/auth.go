@@ -8,7 +8,6 @@ import (
 
 	"github.com/bennv/google_service_cli/internal/auth"
 	"github.com/bennv/google_service_cli/internal/service"
-	"github.com/bennv/google_service_cli/internal/service/drive"
 )
 
 func newAuthCmd(d *service.Deps) *cobra.Command {
@@ -38,14 +37,14 @@ func authLoginCmd(d *service.Deps) *cobra.Command {
 			}
 			ctx := cmd.Context()
 			if in, ok := prov.(auth.Interactive); ok {
-				if err := in.Login(ctx, drive.OAuthScopes); err != nil {
+				if err := in.Login(ctx, d.Scopes); err != nil {
 					return err
 				}
 				fmt.Fprintf(cmd.OutOrStdout(), "Logged in profile %q.\n", d.Profile.Name)
 				return nil
 			}
 			// Non-interactive (service account): validate by minting a token.
-			ts, err := prov.TokenSource(ctx, drive.OAuthScopes...)
+			ts, err := prov.TokenSource(ctx, d.Scopes...)
 			if err != nil {
 				return err
 			}

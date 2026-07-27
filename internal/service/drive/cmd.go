@@ -22,6 +22,8 @@ func New() service.Service { return &svc{} }
 
 func (s *svc) Name() string { return "drive" }
 
+func (s *svc) Scopes() []string { return OAuthScopes }
+
 func (s *svc) Command(d *service.Deps) *cobra.Command {
 	cmd := &cobra.Command{Use: "drive", Short: "Interact with Google Drive"}
 	cmd.AddCommand(listCmd(d), infoCmd(d), searchCmd(d), aboutCmd(d), uploadCmd(d), downloadCmd(d))
