@@ -78,8 +78,13 @@ func TestResultMarshalsAsSpaceArray(t *testing.T) {
 	if _, ok := m["threadId"]; ok {
 		t.Fatal("threadId must not appear in JSON; the thread level already carries it")
 	}
-	// Summary and errors are stderr concerns and must stay out of JSON.
-	if strings.Contains(string(b), "summary") || strings.Contains(string(b), "errors") {
+	// Summary and errors are stderr concerns, so `-o json > out.json` must stay
+	// valid JSON: the top level must be an array, not an object exposing those
+	// fields as keys (already enforced above by unmarshaling into []map[string]any),
+	// and neither field name may appear as a key at all, case-insensitively, in
+	// case a fallback to default struct marshaling emits them capitalized.
+	lb := strings.ToLower(string(b))
+	if strings.Contains(lb, `"summary"`) || strings.Contains(lb, `"errors"`) {
 		t.Fatalf("JSON leaked stderr-only fields: %s", b)
 	}
 }
