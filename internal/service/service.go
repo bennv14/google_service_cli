@@ -25,6 +25,13 @@ type Deps struct {
 	// Scopes is the union of every registered service's OAuth scopes,
 	// used by `gsvc auth login`.
 	Scopes []string
+
+	// OutputFormat is the resolved --output value; OutputExplicit reports
+	// whether the user set it. A command with a different natural default
+	// builds its own writer: if !OutputExplicit { out = NewOut("text") }.
+	OutputFormat   string
+	OutputExplicit bool
+	NewOut         func(format string) output.Writer
 }
 
 // Service is one Google service's command subtree.

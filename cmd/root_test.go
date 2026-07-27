@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"io"
 	"strings"
 	"testing"
 
@@ -67,4 +68,32 @@ func TestRootPopulatesDepsScopes(t *testing.T) {
 	if len(serviceScopes(services)) == 0 {
 		t.Fatal("registry contributes no scopes")
 	}
+}
+
+func TestPopulateDepsRecordsOutputFormat(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	var buf bytes.Buffer
+	deps := &service.Deps{}
+	if err := populateDeps(deps, "", "json", true, &buf); err != nil {
+		t.Fatal(err)
+	}
+	if deps.OutputFormat != "json" || !deps.OutputExplicit {
+		t.Fatalf("OutputFormat=%q OutputExplicit=%v", deps.OutputFormat, deps.OutputExplicit)
+	}
+	if deps.NewOut == nil {
+		t.Fatal("NewOut not populated")
+	}
+	if err := deps.NewOut("text").Render(textOnly{}); err != nil {
+		t.Fatal(err)
+	}
+	if buf.String() != "hi" {
+		t.Fatalf("NewOut wrote to the wrong writer: %q", buf.String())
+	}
+}
+
+type textOnly struct{}
+
+func (textOnly) Text(w io.Writer) error {
+	_, err := io.WriteString(w, "hi")
+	return err
 }

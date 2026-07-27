@@ -57,12 +57,13 @@ various Google services (Drive, Sheets, Gmail, ...).`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-			return populateDeps(deps, profileFlag, outputFlag, cmd.OutOrStdout())
+			explicit := cmd.Root().PersistentFlags().Changed("output")
+			return populateDeps(deps, profileFlag, outputFlag, explicit, cmd.OutOrStdout())
 		},
 	}
 
 	root.PersistentFlags().StringVar(&profileFlag, "profile", "", "profile to use (default: active profile)")
-	root.PersistentFlags().StringVarP(&outputFlag, "output", "o", "table", "output format: table | json")
+	root.PersistentFlags().StringVarP(&outputFlag, "output", "o", "table", "output format: table | json | text")
 	root.PersistentFlags().BoolVar(&verboseFlag, "verbose", false, "verbose error output")
 
 	// Shared commands.
@@ -80,7 +81,7 @@ various Google services (Drive, Sheets, Gmail, ...).`,
 // populateDeps fills the shared deps from flags and on-disk config.
 // Missing/unauthenticated config is tolerated: NewClient returns a helpful
 // error only when a command actually needs API access.
-func populateDeps(deps *service.Deps, profileFlag, outputFlag string, out io.Writer) error {
+func populateDeps(deps *service.Deps, profileFlag, outputFlag string, outputExplicit bool, out io.Writer) error {
 	dir, err := config.DefaultDir()
 	if err != nil {
 		return err
@@ -94,7 +95,10 @@ func populateDeps(deps *service.Deps, profileFlag, outputFlag string, out io.Wri
 	deps.Config = store
 	deps.Tokens = tokens
 	deps.Scopes = serviceScopes(services)
-	deps.Out = output.NewWriter(outputFlag, out)
+	deps.OutputFormat = outputFlag
+	deps.OutputExplicit = outputExplicit
+	deps.NewOut = func(format string) output.Writer { return output.NewWriter(format, out) }
+	deps.Out = deps.NewOut(outputFlag)
 
 	prof, perr := selectedProfile(store, profileFlag)
 	if perr == nil {

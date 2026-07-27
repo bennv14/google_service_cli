@@ -15,6 +15,12 @@ type TableView interface {
 	Rows() [][]string
 }
 
+// TextView is implemented by result types that can render themselves as
+// free-form text (used by the "text" format).
+type TextView interface {
+	Text(w io.Writer) error
+}
+
 // Writer renders arbitrary data in the configured format.
 type Writer interface {
 	Render(data any) error
@@ -25,7 +31,7 @@ type writer struct {
 	w      io.Writer
 }
 
-// NewWriter returns a Writer. format is "table" (default) or "json".
+// NewWriter returns a Writer. format is "table" (default), "json", or "text".
 func NewWriter(format string, w io.Writer) Writer {
 	if format == "" {
 		format = "table"
@@ -50,6 +56,12 @@ func (o *writer) Render(data any) error {
 			fmt.Fprintln(tw, strings.Join(r, "\t"))
 		}
 		return tw.Flush()
+	case "text":
+		tv, ok := data.(TextView)
+		if !ok {
+			return fmt.Errorf("value of type %T cannot be rendered as text (use --output json)", data)
+		}
+		return tv.Text(o.w)
 	default:
 		return fmt.Errorf("unknown output format %q", o.format)
 	}
