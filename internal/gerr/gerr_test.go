@@ -53,6 +53,31 @@ func TestFriendly(t *testing.T) {
 			input:   &googleapi.Error{Code: 400, Message: "Bad Request"},
 			wantErr: "googleapi: Error 400: Bad Request",
 		},
+		{
+			name: "403 insufficient scopes",
+			input: &googleapi.Error{
+				Code:    403,
+				Message: "Request had insufficient authentication scopes.",
+			},
+			wantErr: "missing OAuth scopes: run 'gsvc auth login' again to grant the new permissions: googleapi: Error 403: Request had insufficient authentication scopes.",
+		},
+		{
+			name: "403 scope reason on a detail",
+			input: &googleapi.Error{
+				Code:    403,
+				Message: "Permission denied.",
+				Errors:  []googleapi.ErrorItem{{Reason: "ACCESS_TOKEN_SCOPE_INSUFFICIENT"}},
+			},
+			wantErr: "missing OAuth scopes: run 'gsvc auth login' again to grant the new permissions: googleapi: Error 403: Permission denied.\nMore details:\nReason: ACCESS_TOKEN_SCOPE_INSUFFICIENT, Message: \n",
+		},
+		{
+			name: "403 api not enabled",
+			input: &googleapi.Error{
+				Code:    403,
+				Message: "Google Chat API has not been used in project 12345 before or it is disabled.",
+			},
+			wantErr: "the Google Chat API is not enabled for this OAuth client's GCP project: enable it at https://console.cloud.google.com/apis/library/chat.googleapis.com then retry: googleapi: Error 403: Google Chat API has not been used in project 12345 before or it is disabled.",
+		},
 	}
 
 	for _, tt := range tests {
