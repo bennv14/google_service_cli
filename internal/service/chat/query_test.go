@@ -71,6 +71,13 @@ func TestWindowLabel(t *testing.T) {
 			"2026-07-01 00:00 → 2026-07-02 00:00",
 		},
 		{time.Time{}, time.Date(2026, 7, 2, 0, 0, 0, 0, time.UTC), "until 2026-07-02 00:00"},
+		// Boundary tests: minutes/hours threshold
+		{now.Add(-59*time.Minute - 29*time.Second), time.Time{}, "59 minutes"},
+		{now.Add(-59*time.Minute - 30*time.Second), time.Time{}, "1 hour"},
+		// Boundary tests: hours/days threshold
+		{now.Add(-23*time.Hour - 29*time.Minute), time.Time{}, "23 hours"},
+		{now.Add(-23*time.Hour - 30*time.Minute), time.Time{}, "1 day"},
+		{now.Add(-23*time.Hour - 59*time.Minute), time.Time{}, "1 day"},
 	}
 	for _, c := range cases {
 		if got := windowLabel(c.since, c.until, now); got != c.want {

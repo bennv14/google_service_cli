@@ -45,6 +45,9 @@ func invalidWhen(s string) error {
 }
 
 // windowLabel describes the scanned window for the summary line.
+// The display unit is chosen by rounding the duration to the candidate unit,
+// then checking if the rounded value fits within that unit's range.
+// This ensures the rounded count never overflows into the next unit.
 func windowLabel(since, until, now time.Time) string {
 	const stamp = "2006-01-02 15:04"
 	switch {
@@ -56,12 +59,19 @@ func windowLabel(since, until, now time.Time) string {
 		return since.Format(stamp) + " → " + until.Format(stamp)
 	}
 	d := now.Sub(since)
-	switch {
-	case d < 90*time.Minute:
-		return plural(int(d.Round(time.Minute).Minutes()), "minute", "minutes")
-	case d < 24*time.Hour:
-		return plural(int(d.Round(time.Hour).Hours()), "hour", "hours")
-	default:
-		return plural(int(d.Round(24*time.Hour).Hours()/24), "day", "days")
+
+	// Round to minutes and check if we should display in minutes.
+	minutes := int(d.Round(time.Minute).Minutes())
+	if minutes < 60 {
+		return plural(minutes, "minute", "minutes")
 	}
+
+	// Round to hours and check if we should display in hours.
+	hours := int(d.Round(time.Hour).Hours())
+	if hours < 24 {
+		return plural(hours, "hour", "hours")
+	}
+
+	// Display in days.
+	return plural(int(d.Round(24*time.Hour).Hours()/24), "day", "days")
 }
