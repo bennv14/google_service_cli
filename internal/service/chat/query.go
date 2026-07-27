@@ -761,3 +761,44 @@ func recount(groups []SpaceGroup) {
 		groups[i].Space.UnreadCount = n
 	}
 }
+
+// Spaces lists the spaces the caller belongs to. Without UnreadOnly this is a
+// single spaces.list call and every space is returned, including quiet ones.
+// With UnreadOnly it runs a full scan and keeps only spaces that actually have
+// unread messages, annotated with the count.
+func (e *Engine) Spaces(ctx context.Context, q Query) (SpaceList, error) {
+	if q.UnreadOnly {
+		res, err := e.Run(ctx, q)
+		if err != nil {
+			return SpaceList{}, err
+		}
+		var out SpaceList
+		for _, sg := range res.Spaces {
+			if sg.Space.UnreadCount == 0 {
+				continue
+			}
+			out.Spaces = append(out.Spaces, sg.Space)
+		}
+		return out, nil
+	}
+
+	spaces, err := e.selectSpaces(ctx, q)
+	if err != nil {
+		return SpaceList{}, err
+	}
+	out := SpaceList{Spaces: make([]SpaceInfo, 0, len(spaces))}
+	for _, sp := range spaces {
+		name := sp.DisplayName
+		if name == "" {
+			name = shortID(sp.Name) // DMs have no display name and no messages to infer one from
+		}
+		out.Spaces = append(out.Spaces, SpaceInfo{
+			ID:        sp.Name,
+			Name:      name,
+			Type:      sp.SpaceType,
+			Threading: sp.SpaceThreadingState,
+			Link:      spaceLink(sp.Name, sp.SpaceUri, q.AccountIndex),
+		})
+	}
+	return out, nil
+}

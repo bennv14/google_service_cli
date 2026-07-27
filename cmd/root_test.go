@@ -152,3 +152,16 @@ func TestOutputExplicitFlagWiring(t *testing.T) {
 		}
 	})
 }
+
+func TestRootRegistersChat(t *testing.T) {
+	root := buildRootCmd()
+	var buf bytes.Buffer
+	root.SetOut(&buf)
+	root.SetArgs([]string{"--help"})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(buf.String(), "chat") {
+		t.Fatalf("root help missing chat:\n%s", buf.String())
+	}
+}

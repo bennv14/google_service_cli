@@ -162,3 +162,25 @@ func TestAuthRequireProfile(t *testing.T) {
 		}
 	}
 }
+
+func TestLoginRequestsEveryServicesScopes(t *testing.T) {
+	scopes := serviceScopes(services)
+	for _, want := range []string{
+		"https://www.googleapis.com/auth/drive.readonly",
+		"https://www.googleapis.com/auth/drive.file",
+		"https://www.googleapis.com/auth/chat.spaces.readonly",
+		"https://www.googleapis.com/auth/chat.messages.readonly",
+		"https://www.googleapis.com/auth/chat.users.readstate.readonly",
+	} {
+		found := false
+		for _, s := range scopes {
+			if s == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("auth login would not request %q; got %v", want, scopes)
+		}
+	}
+}
