@@ -41,17 +41,19 @@ func TestSplitSpaceAndThreadName(t *testing.T) {
 
 func TestIsThreadHead(t *testing.T) {
 	cases := []struct {
-		in   string
-		want bool
+		in        string
+		wantHead  bool
+		wantKnown bool
 	}{
-		{"spaces/S/messages/kR3nP.kR3nP", true},
-		{"spaces/S/messages/kR3nP.zzzz", false},
-		{"spaces/S/messages/nodot", false},
-		{"", false},
+		{"spaces/S/messages/kR3nP.kR3nP", true, true},
+		{"spaces/S/messages/kR3nP.zzzz", false, true},
+		{"spaces/S/messages/nodot", false, false},
+		{"", false, false},
 	}
 	for _, c := range cases {
-		if got := isThreadHead(c.in); got != c.want {
-			t.Errorf("isThreadHead(%q) = %v, want %v", c.in, got, c.want)
+		head, known := isThreadHead(c.in)
+		if head != c.wantHead || known != c.wantKnown {
+			t.Errorf("isThreadHead(%q) = (%v,%v), want (%v,%v)", c.in, head, known, c.wantHead, c.wantKnown)
 		}
 	}
 }

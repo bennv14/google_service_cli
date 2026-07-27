@@ -58,11 +58,16 @@ func splitMessageName(name string) (sid, tid, mid string, ok bool) {
 }
 
 // isThreadHead reports whether a message is the first message of its thread.
-// Callers must treat a false result on an unparseable name as "unknown", not
-// as "definitely a reply" — see partial-thread detection in query.go.
-func isThreadHead(messageName string) bool {
+// known reports whether messageName parsed as a message name at all; head is
+// meaningful only when known is true. This two-value contract exists so a
+// caller cannot conflate "genuinely a reply" with "name didn't parse" — see
+// partial-thread detection in query.go.
+func isThreadHead(messageName string) (head, known bool) {
 	_, tid, mid, ok := splitMessageName(messageName)
-	return ok && tid == mid
+	if !ok {
+		return false, false
+	}
+	return tid == mid, true
 }
 
 // spaceLink returns a browser URL for a space. A spaceUri handed back by the
