@@ -1,0 +1,67 @@
+version: 2
+
+project_name: google_service_cli
+
+builds:
+  - main: .
+    binary: gsvc
+    goos:
+      - darwin
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w -X github.com/bennv/google_service_cli/cmd.version=v{{ .Version }} -X github.com/bennv/google_service_cli/cmd.commit={{ .Commit }} -X github.com/bennv/google_service_cli/cmd.date={{ .Date }}
+
+archives:
+  - formats: [tar.gz]
+    name_template: >-
+      gsvc_v
+      {{- .Version }}_
+      {{- if eq .Os "darwin" }}macOS
+      {{- else }}{{ .Os }}{{ end }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "386" }}i386
+      {{- else }}{{ .Arch }}{{ end }}
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+
+checksum:
+  name_template: 'checksums.txt'
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^chore:'
+      - 'Merge pull request'
+
+homebrew_casks:
+  - name: gsvc
+    binaries: [gsvc]
+    repository:
+      owner: bennv14
+      name: homebrew-tap
+    directory: Casks
+    homepage: "https://github.com/bennv14/google_service_cli"
+    description: "Google Service CLI (gsvc)"
+    commit_author:
+      name: bennv
+      email: nguyenvanben02001@gmail.com
+    commit_msg_template: "chore: bump gsvc to {{ .Tag }}"
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/gsvc"]
+          end
