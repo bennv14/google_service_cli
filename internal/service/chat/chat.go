@@ -142,7 +142,7 @@ func (c *Client) SpaceReadState(ctx context.Context, spaceName string) (string, 
 	}
 	ts, err := time.Parse(time.RFC3339Nano, rs.LastReadTime)
 	if err != nil {
-		return rs.Name, time.Time{}, nil
+		return "", time.Time{}, fmt.Errorf("chat: space %s has a malformed lastReadTime %q: %w", spaceName, rs.LastReadTime, err)
 	}
 	return rs.Name, ts, nil
 }

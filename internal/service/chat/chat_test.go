@@ -216,6 +216,29 @@ func TestSpaceReadStateToleratesMissingTime(t *testing.T) {
 	}
 }
 
+func TestSpaceReadStateRejectsMalformedTime(t *testing.T) {
+	const badTime = "not-a-timestamp"
+	cl := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"name":         "users/1/spaces/A/spaceReadState",
+			"lastReadTime": badTime,
+		})
+	})
+	_, ts, err := cl.SpaceReadState(context.Background(), "spaces/A")
+	if err == nil {
+		t.Fatal("expected an error for a malformed lastReadTime, got nil")
+	}
+	if !strings.Contains(err.Error(), badTime) {
+		t.Fatalf("err = %q, want it to quote %q", err.Error(), badTime)
+	}
+	if !strings.Contains(err.Error(), "spaces/A") {
+		t.Fatalf("err = %q, want it to name the space", err.Error())
+	}
+	if !ts.IsZero() {
+		t.Fatalf("lastReadTime = %v, want zero on error", ts)
+	}
+}
+
 func TestFindDirectMessageAndGetSpaceAndMembers(t *testing.T) {
 	var dmName string
 	cl := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
