@@ -65,8 +65,27 @@ func TestServiceScopesUnionsAndDedupes(t *testing.T) {
 }
 
 func TestRootPopulatesDepsScopes(t *testing.T) {
-	if len(serviceScopes(services)) == 0 {
-		t.Fatal("registry contributes no scopes")
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	var buf bytes.Buffer
+	deps := &service.Deps{}
+	if err := populateDeps(deps, "", "table", false, &buf); err != nil {
+		t.Fatal(err)
+	}
+
+	// Assert deps.Scopes is non-empty: registry must contribute scopes
+	if len(deps.Scopes) == 0 {
+		t.Fatal("deps.Scopes is empty")
+	}
+
+	// Assert deps.Scopes equals serviceScopes(services): populateDeps must wire the scope union
+	want := serviceScopes(services)
+	if len(deps.Scopes) != len(want) {
+		t.Fatalf("deps.Scopes = %v, want %v", deps.Scopes, want)
+	}
+	for i := range want {
+		if deps.Scopes[i] != want[i] {
+			t.Fatalf("deps.Scopes = %v, want %v", deps.Scopes, want)
+		}
 	}
 }
 
