@@ -27,6 +27,24 @@ cd google_service_cli
 make install
 ```
 
+## Shell completion
+
+Homebrew installs the bash, zsh and fish completions with the cask — just start
+a new shell. If completion still does nothing, your zsh setup is likely running
+`compinit` before Homebrew's `site-functions` directory is on `fpath`; refresh
+the cache with `rm -f ~/.zcompdump*` and reopen the terminal.
+
+For other install methods, generate the script yourself:
+
+```bash
+# zsh
+gsvc completion zsh > "${fpath[1]}/_gsvc"
+# bash
+gsvc completion bash > /usr/local/etc/bash_completion.d/gsvc
+# fish
+gsvc completion fish > ~/.config/fish/completions/gsvc.fish
+```
+
 ## Build
 
 ```bash

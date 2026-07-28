@@ -8,10 +8,10 @@ import (
 
 	"golang.org/x/oauth2"
 
-	"github.com/bennv/google_service_cli/internal/auth"
-	"github.com/bennv/google_service_cli/internal/config"
-	"github.com/bennv/google_service_cli/internal/output"
-	"github.com/bennv/google_service_cli/internal/service"
+	"github.com/bennv14/google_service_cli/internal/auth"
+	"github.com/bennv14/google_service_cli/internal/config"
+	"github.com/bennv14/google_service_cli/internal/output"
+	"github.com/bennv14/google_service_cli/internal/service"
 )
 
 func TestAuthStatusReportsProfile(t *testing.T) {

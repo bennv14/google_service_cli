@@ -11,13 +11,13 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/bennv/google_service_cli/internal/auth"
-	"github.com/bennv/google_service_cli/internal/config"
-	"github.com/bennv/google_service_cli/internal/gclient"
-	"github.com/bennv/google_service_cli/internal/output"
-	"github.com/bennv/google_service_cli/internal/service"
-	"github.com/bennv/google_service_cli/internal/service/chat"
-	"github.com/bennv/google_service_cli/internal/service/drive"
+	"github.com/bennv14/google_service_cli/internal/auth"
+	"github.com/bennv14/google_service_cli/internal/config"
+	"github.com/bennv14/google_service_cli/internal/gclient"
+	"github.com/bennv14/google_service_cli/internal/output"
+	"github.com/bennv14/google_service_cli/internal/service"
+	"github.com/bennv14/google_service_cli/internal/service/chat"
+	"github.com/bennv14/google_service_cli/internal/service/drive"
 )
 
 // services is the service registry. Adding a service here wires up both its

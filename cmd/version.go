@@ -6,7 +6,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// Set at build time via -ldflags "-X github.com/bennv/google_service_cli/cmd.version=..."
+// Set at build time via -ldflags "-X github.com/bennv14/google_service_cli/cmd.version=..."
 var (
 	version = "dev"
 	commit  = "none"

@@ -14,7 +14,7 @@ import (
 
 	"golang.org/x/oauth2"
 
-	"github.com/bennv/google_service_cli/internal/config"
+	"github.com/bennv14/google_service_cli/internal/config"
 )
 
 // writeInstalledClient writes a minimal "installed app" client secret file and

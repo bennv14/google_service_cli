@@ -7,8 +7,8 @@ import (
 	"github.com/spf13/cobra"
 	"google.golang.org/api/option"
 
-	"github.com/bennv/google_service_cli/internal/gerr"
-	"github.com/bennv/google_service_cli/internal/service"
+	"github.com/bennv14/google_service_cli/internal/gerr"
+	"github.com/bennv14/google_service_cli/internal/service"
 )
 
 // testClientOpts lets tests point the Drive client at an httptest server.

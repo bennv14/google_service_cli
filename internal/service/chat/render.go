@@ -8,7 +8,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/bennv/google_service_cli/internal/output"
+	"github.com/bennv14/google_service_cli/internal/output"
 )
 
 const (

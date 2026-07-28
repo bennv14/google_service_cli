@@ -3,7 +3,7 @@ package auth
 import (
 	"fmt"
 
-	"github.com/bennv/google_service_cli/internal/config"
+	"github.com/bennv14/google_service_cli/internal/config"
 )
 
 // NewProvider selects a provider based on the profile's AuthType.
