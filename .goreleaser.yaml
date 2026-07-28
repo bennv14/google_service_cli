@@ -2,6 +2,12 @@ version: 2
 
 project_name: google_service_cli
 
+# Shell completion scripts are generated from the binary itself so they never
+# drift from the command tree; the archives ship them and the cask installs them.
+before:
+  hooks:
+    - ./scripts/completions.sh
+
 builds:
   - main: .
     binary: gsvc
@@ -15,7 +21,7 @@ builds:
     env:
       - CGO_ENABLED=0
     ldflags:
-      - -s -w -X github.com/bennv/google_service_cli/cmd.version=v{{ .Version }} -X github.com/bennv/google_service_cli/cmd.commit={{ .Commit }} -X github.com/bennv/google_service_cli/cmd.date={{ .Date }}
+      - -s -w -X github.com/bennv14/google_service_cli/cmd.version=v{{ .Version }} -X github.com/bennv14/google_service_cli/cmd.commit={{ .Commit }} -X github.com/bennv14/google_service_cli/cmd.date={{ .Date }}
 
 archives:
   - formats: [tar.gz]
@@ -30,6 +36,9 @@ archives:
     format_overrides:
       - goos: windows
         formats: [zip]
+    files:
+      - README.md
+      - completions/*
 
 checksum:
   name_template: 'checksums.txt'
@@ -49,6 +58,10 @@ changelog:
 homebrew_casks:
   - name: gsvc
     binaries: [gsvc]
+    completions:
+      bash: completions/gsvc.bash
+      zsh: completions/gsvc.zsh
+      fish: completions/gsvc.fish
     repository:
       owner: bennv14
       name: homebrew-tap

@@ -6,8 +6,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/bennv/google_service_cli/internal/auth"
-	"github.com/bennv/google_service_cli/internal/service"
+	"github.com/bennv14/google_service_cli/internal/auth"
+	"github.com/bennv14/google_service_cli/internal/service"
 )
 
 func newAuthCmd(d *service.Deps) *cobra.Command {

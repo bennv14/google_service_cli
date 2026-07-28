@@ -8,7 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/bennv/google_service_cli/internal/service"
+	"github.com/bennv14/google_service_cli/internal/service"
 )
 
 func TestRootWiresSubcommands(t *testing.T) {

@@ -1,4 +1,4 @@
-module github.com/bennv/google_service_cli
+module github.com/bennv14/google_service_cli
 
 go 1.24.5
 

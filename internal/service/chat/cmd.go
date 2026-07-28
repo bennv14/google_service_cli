@@ -11,9 +11,9 @@ import (
 	"github.com/spf13/cobra"
 	"google.golang.org/api/option"
 
-	"github.com/bennv/google_service_cli/internal/gerr"
-	"github.com/bennv/google_service_cli/internal/output"
-	"github.com/bennv/google_service_cli/internal/service"
+	"github.com/bennv14/google_service_cli/internal/gerr"
+	"github.com/bennv14/google_service_cli/internal/output"
+	"github.com/bennv14/google_service_cli/internal/service"
 )
 
 // testClientOpts lets tests point the Chat client at an httptest server.

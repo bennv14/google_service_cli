@@ -1,6 +1,6 @@
 package main
 
-import "github.com/bennv/google_service_cli/cmd"
+import "github.com/bennv14/google_service_cli/cmd"
 
 func main() {
 	cmd.Execute()

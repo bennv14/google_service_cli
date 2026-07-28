@@ -16,3 +16,6 @@ token.json
 # Test / coverage
 *.test
 coverage.out
+
+# Generated shell completions (built at release time)
+/completions/

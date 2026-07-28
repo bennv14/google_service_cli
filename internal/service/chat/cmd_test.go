@@ -12,9 +12,9 @@ import (
 	"github.com/spf13/cobra"
 	"google.golang.org/api/option"
 
-	"github.com/bennv/google_service_cli/internal/config"
-	"github.com/bennv/google_service_cli/internal/output"
-	"github.com/bennv/google_service_cli/internal/service"
+	"github.com/bennv14/google_service_cli/internal/config"
+	"github.com/bennv14/google_service_cli/internal/output"
+	"github.com/bennv14/google_service_cli/internal/service"
 )
 
 // chatServer serves one space with two messages in one thread.

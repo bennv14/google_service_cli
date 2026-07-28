@@ -7,9 +7,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/bennv/google_service_cli/internal/auth"
-	"github.com/bennv/google_service_cli/internal/config"
-	"github.com/bennv/google_service_cli/internal/output"
+	"github.com/bennv14/google_service_cli/internal/auth"
+	"github.com/bennv14/google_service_cli/internal/config"
+	"github.com/bennv14/google_service_cli/internal/output"
 )
 
 // Deps is the shared runtime context, populated by cmd/root.go in

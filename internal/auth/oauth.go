@@ -16,7 +16,7 @@ import (
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 
-	"github.com/bennv/google_service_cli/internal/config"
+	"github.com/bennv14/google_service_cli/internal/config"
 )
 
 type oauthProvider struct {

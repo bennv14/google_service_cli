@@ -12,8 +12,8 @@ import (
 
 	"google.golang.org/api/option"
 
-	"github.com/bennv/google_service_cli/internal/output"
-	"github.com/bennv/google_service_cli/internal/service"
+	"github.com/bennv14/google_service_cli/internal/output"
+	"github.com/bennv14/google_service_cli/internal/service"
 )
 
 func TestDriveServiceName(t *testing.T) {

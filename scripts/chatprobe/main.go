@@ -22,8 +22,8 @@ import (
 	chatapi "google.golang.org/api/chat/v1"
 	"google.golang.org/api/option"
 
-	"github.com/bennv/google_service_cli/internal/auth"
-	"github.com/bennv/google_service_cli/internal/config"
+	"github.com/bennv14/google_service_cli/internal/auth"
+	"github.com/bennv14/google_service_cli/internal/config"
 )
 
 var scopes = []string{
