@@ -1,6 +1,7 @@
 # google_service_cli
 
-A command line tool for interacting with various Google services.
+`gsvc` is a command line tool for interacting with Google services — **Drive**
+(read and write) and **Chat** (read-only).
 
 ## Install
 
@@ -27,6 +28,18 @@ cd google_service_cli
 make install
 ```
 
+## Quick start
+
+```bash
+gsvc config add personal --auth-type oauth --client-path ~/Downloads/client_secret.json
+gsvc auth login
+gsvc drive list --limit 10
+gsvc chat unread
+```
+
+`gsvc` uses your own Google Cloud OAuth client. See
+[USAGE.md](USAGE.md#google-cloud-setup) for how to create one.
+
 ## Shell completion
 
 Homebrew installs the bash, zsh and fish completions with the cask — just start
@@ -45,26 +58,33 @@ gsvc completion bash > /usr/local/etc/bash_completion.d/gsvc
 gsvc completion fish > ~/.config/fish/completions/gsvc.fish
 ```
 
-## Build
+## Documentation
+
+- **[USAGE.md](USAGE.md)** — full guide: setup, profiles, every command, output
+  formats, troubleshooting.
+- **[CHANGELOG.md](CHANGELOG.md)** — what changed in each release.
+
+## Development
 
 ```bash
-go build -o google_service_cli .
-```
-
-## Run
-
-```bash
-go run . version
+make build    # build ./gsvc
+make install  # build into $(go env GOPATH)/bin
+make test     # go test ./...
 ```
 
 ## Project layout
 
 ```
 .
-├── main.go              # entry point
-├── cmd/                 # cobra commands
-│   ├── root.go
-│   └── version.go
+├── main.go                    # entry point
+├── cmd/                       # root command, global flags, auth, config, version
 └── internal/
-    └── service/         # Google service clients / business logic
+    ├── auth/                  # OAuth loopback + service account providers, token store
+    ├── config/                # named-profile YAML store
+    ├── gclient/               # lazy authenticated HTTP client factory
+    ├── gerr/                  # Google API error mapping
+    ├── output/                # table / json / text writers
+    └── service/               # service registry
+        ├── drive/             # Google Drive
+        └── chat/              # Google Chat (read-only)
 ```
