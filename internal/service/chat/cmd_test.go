@@ -211,6 +211,12 @@ func TestChatPresetsExistWithTheRightDefaults(t *testing.T) {
 	if got := find("mentions").Flags().Lookup("since").DefValue; got != "7d" {
 		t.Errorf("mentions --since default = %q, want 7d", got)
 	}
+	// Every command that scans more than one space can narrow that scan.
+	for _, name := range []string{"messages", "unread", "mentions", "spaces"} {
+		if find(name).Flags().Lookup("type") == nil {
+			t.Errorf("%s is missing --type", name)
+		}
+	}
 }
 
 func TestChatRejectsBadTimeAndGroup(t *testing.T) {

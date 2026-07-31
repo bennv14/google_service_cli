@@ -99,6 +99,12 @@ func addQueryFlags(c *cobra.Command, f *queryFlags, limitDefault int, sinceDefau
 	c.Flags().IntVar(&f.limit, "limit", limitDefault, "maximum number of messages in total (0 = no limit)")
 }
 
+// addSpaceTypeFlag registers --type on the commands that scan more than one
+// space. `chat threads` requires --space, so it has nothing left to narrow.
+func addSpaceTypeFlag(c *cobra.Command, f *queryFlags) {
+	c.Flags().StringSliceVar(&f.types, "type", nil, "restrict to space types: space, dm, group")
+}
+
 // engine builds a query engine for a command.
 func engine(ctx context.Context, d *service.Deps) (*Engine, error) {
 	hc, err := d.NewClient(ctx, OAuthScopes...)
@@ -207,7 +213,7 @@ so --mention-me across every space reads a lot and prints progress to stderr.`,
 		},
 	}
 	addQueryFlags(c, f, 50, "")
-	c.Flags().StringSliceVar(&f.types, "type", nil, "restrict to space types: space, dm, group")
+	addSpaceTypeFlag(c, f)
 	return c
 }
 
@@ -221,6 +227,7 @@ func unreadCmd(d *service.Deps) *cobra.Command {
 		},
 	}
 	addQueryFlags(c, f, 50, "")
+	addSpaceTypeFlag(c, f)
 	return c
 }
 
@@ -234,6 +241,7 @@ func mentionsCmd(d *service.Deps) *cobra.Command {
 		},
 	}
 	addQueryFlags(c, f, 50, "7d")
+	addSpaceTypeFlag(c, f)
 	return c
 }
 
@@ -321,7 +329,7 @@ with its unread count. This lists spaces, never messages.`,
 			return nil
 		},
 	}
-	c.Flags().StringSliceVar(&f.types, "type", nil, "restrict to space types: space, dm, group")
+	addSpaceTypeFlag(c, f)
 	c.Flags().BoolVar(&f.unread, "unread", false, "only spaces with unread messages, with counts")
 	c.Flags().BoolVar(&f.links, "links", false, "print URLs on their own lines instead of embedding them")
 	return c
