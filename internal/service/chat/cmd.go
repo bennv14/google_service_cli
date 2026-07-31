@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -47,16 +49,17 @@ behind your OAuth client.`,
 // queryFlags is the full set of message-query flags; each command registers the
 // subset it needs and leaves the rest at their zero values.
 type queryFlags struct {
-	space      string
-	thread     string
-	since      string
-	until      string
-	group      string
-	types      []string
-	unread     bool
-	mentionsMe bool
-	links      bool
-	limit      int
+	space        string
+	thread       string
+	since        string
+	until        string
+	group        string
+	types        []string
+	unread       bool
+	mentionsMe   bool
+	links        bool
+	limit        int
+	refreshNames bool
 }
 
 func (f *queryFlags) query(now time.Time) (Query, error) {
@@ -97,6 +100,14 @@ func addQueryFlags(c *cobra.Command, f *queryFlags, limitDefault int, sinceDefau
 	c.Flags().StringVar(&f.group, "group", "", "grouping: space | thread | flat (default: adapt to each space)")
 	c.Flags().BoolVar(&f.links, "links", false, "print URLs on their own lines instead of embedding them")
 	c.Flags().IntVar(&f.limit, "limit", limitDefault, "maximum number of messages in total (0 = no limit)")
+	addRefreshNamesFlag(c, f)
+}
+
+// addRefreshNamesFlag registers --refresh-names. Every chat subcommand prints
+// somebody's name, so every one of them can be told to re-fetch it.
+func addRefreshNamesFlag(c *cobra.Command, f *queryFlags) {
+	c.Flags().BoolVar(&f.refreshNames, "refresh-names", false,
+		"ignore cached display names and look them up again")
 }
 
 // addSpaceTypeFlag registers --type on the commands that scan more than one
@@ -116,6 +127,33 @@ func engine(ctx context.Context, d *service.Deps) (*Engine, error) {
 		return nil, err
 	}
 	return NewEngine(cl), nil
+}
+
+// newDirectory builds the name resolver for a command. Production always stacks
+// the cache over the People API: there is no way to learn whether the stored
+// token carries directory.readonly without asking, so a refusal is handled as a
+// warning at call time rather than detected up front.
+func newDirectory(ctx context.Context, d *service.Deps, hc *http.Client, refresh bool) (Directory, error) {
+	people, err := newPeopleDirectory(ctx, hc, testClientOpts...)
+	if err != nil {
+		return nil, err
+	}
+	path := nameCachePath(d)
+	if path == "" {
+		return people, nil
+	}
+	return newCachedDirectory(people, path, refresh), nil
+}
+
+// nameCachePath is where this profile's remembered names live. Splitting by
+// profile keeps one account from seeing another's directory. An empty result
+// means "do not cache": with no config directory and no profile there is
+// nowhere safe to write.
+func nameCachePath(d *service.Deps) string {
+	if d.ConfigDir == "" || d.Profile.Name == "" {
+		return ""
+	}
+	return filepath.Join(d.ConfigDir, "cache", "people-"+d.Profile.Name+".json")
 }
 
 // writer picks the output writer. chat's natural default is `text`, but the
@@ -332,5 +370,6 @@ with its unread count. This lists spaces, never messages.`,
 	addSpaceTypeFlag(c, f)
 	c.Flags().BoolVar(&f.unread, "unread", false, "only spaces with unread messages, with counts")
 	c.Flags().BoolVar(&f.links, "links", false, "print URLs on their own lines instead of embedding them")
+	addRefreshNamesFlag(c, f)
 	return c
 }

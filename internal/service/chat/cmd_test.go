@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -73,6 +74,7 @@ func testDeps(t *testing.T, srv *httptest.Server, format string, explicit bool, 
 	t.Cleanup(func() { testClientOpts = nil })
 	return &service.Deps{
 		Profile:        config.Profile{Name: "test", Defaults: map[string]string{"chat_account_index": "1"}},
+		ConfigDir:      t.TempDir(),
 		OutputFormat:   format,
 		OutputExplicit: explicit,
 		NewOut:         func(f string) output.Writer { return output.NewWriter(f, out) },
@@ -88,12 +90,80 @@ func TestChatServiceNameAndScopes(t *testing.T) {
 	if s.Name() != "chat" {
 		t.Fatalf("Name() = %q", s.Name())
 	}
-	if len(s.Scopes()) != 3 {
+	if len(s.Scopes()) != 4 {
 		t.Fatalf("Scopes() = %v", s.Scopes())
 	}
 	for _, sc := range s.Scopes() {
 		if !strings.HasSuffix(sc, ".readonly") {
 			t.Errorf("scope %q is not read-only", sc)
+		}
+	}
+}
+
+func TestNameCachePathIsPerProfile(t *testing.T) {
+	d := &service.Deps{ConfigDir: "/cfg", Profile: config.Profile{Name: "work"}}
+	if got, want := nameCachePath(d), filepath.Join("/cfg", "cache", "people-work.json"); got != want {
+		t.Fatalf("nameCachePath = %q, want %q", got, want)
+	}
+	// A different profile must never read the first profile's names.
+	other := &service.Deps{ConfigDir: "/cfg", Profile: config.Profile{Name: "personal"}}
+	if nameCachePath(other) == nameCachePath(d) {
+		t.Fatal("two profiles must not share one cache file")
+	}
+}
+
+// Without somewhere safe to write, caching is skipped rather than guessed at.
+func TestNameCachePathIsEmptyWithoutAConfigDirOrProfile(t *testing.T) {
+	if got := nameCachePath(&service.Deps{Profile: config.Profile{Name: "work"}}); got != "" {
+		t.Errorf("no ConfigDir must disable the cache, got %q", got)
+	}
+	if got := nameCachePath(&service.Deps{ConfigDir: "/cfg"}); got != "" {
+		t.Errorf("no profile name must disable the cache, got %q", got)
+	}
+}
+
+func TestNewDirectoryCachesWhenItHasSomewhereToWrite(t *testing.T) {
+	srv := chatServer(t)
+	d := testDeps(t, srv, "json", true, new(bytes.Buffer))
+
+	dir, err := newDirectory(context.Background(), d, srv.Client(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, ok := dir.(*cachedDirectory)
+	if !ok {
+		t.Fatalf("newDirectory = %T, want a *cachedDirectory", dir)
+	}
+	if c.path != nameCachePath(d) {
+		t.Fatalf("cache path = %q, want %q", c.path, nameCachePath(d))
+	}
+	if _, ok := c.inner.(*peopleDirectory); !ok {
+		t.Fatalf("cached directory wraps %T, want a *peopleDirectory", c.inner)
+	}
+}
+
+func TestNewDirectorySkipsTheCacheWithNowhereToWrite(t *testing.T) {
+	srv := chatServer(t)
+	d := testDeps(t, srv, "json", true, new(bytes.Buffer))
+	d.ConfigDir = ""
+
+	dir, err := newDirectory(context.Background(), d, srv.Client(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := dir.(*peopleDirectory); !ok {
+		t.Fatalf("newDirectory = %T, want an uncached *peopleDirectory", dir)
+	}
+}
+
+// --refresh-names is useless on a command that cannot show a name, so every
+// chat subcommand carries it — including spaces, which does not use
+// addQueryFlags.
+func TestRefreshNamesFlagIsOnEverySubcommand(t *testing.T) {
+	cmd := New().Command(&service.Deps{})
+	for _, c := range cmd.Commands() {
+		if c.Flags().Lookup("refresh-names") == nil {
+			t.Errorf("chat %s is missing --refresh-names", c.Name())
 		}
 	}
 }

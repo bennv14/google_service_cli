@@ -171,6 +171,7 @@ func TestLoginRequestsEveryServicesScopes(t *testing.T) {
 		"https://www.googleapis.com/auth/chat.spaces.readonly",
 		"https://www.googleapis.com/auth/chat.messages.readonly",
 		"https://www.googleapis.com/auth/chat.users.readstate.readonly",
+		"https://www.googleapis.com/auth/directory.readonly",
 	} {
 		found := false
 		for _, s := range scopes {

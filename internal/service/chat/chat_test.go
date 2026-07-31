@@ -32,6 +32,7 @@ func TestOAuthScopesAreReadOnly(t *testing.T) {
 		"https://www.googleapis.com/auth/chat.spaces.readonly",
 		"https://www.googleapis.com/auth/chat.messages.readonly",
 		"https://www.googleapis.com/auth/chat.users.readstate.readonly",
+		"https://www.googleapis.com/auth/directory.readonly",
 	}
 	if len(OAuthScopes) != len(want) {
 		t.Fatalf("OAuthScopes = %v", OAuthScopes)
