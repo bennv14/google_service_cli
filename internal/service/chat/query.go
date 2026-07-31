@@ -97,17 +97,48 @@ type API interface {
 var _ API = (*Client)(nil)
 
 // Engine runs queries against the Chat API. One Engine serves one command
-// invocation; nothing it caches outlives that.
+// invocation; nothing it caches in memory outlives that.
 type Engine struct {
 	api API
+	dir Directory
 
 	meMu   sync.Mutex
 	meID   string // "users/123456789", resolved lazily
 	meDone bool
+
+	warnMu sync.Mutex
+	warns  []string
 }
 
-// NewEngine returns an Engine backed by api.
-func NewEngine(api API) *Engine { return &Engine{api: api} }
+// NewEngine returns an Engine backed by api, naming people through dir.
+func NewEngine(api API, dir Directory) *Engine { return &Engine{api: api, dir: dir} }
+
+// warn records a non-fatal problem for the command to print, ignoring repeats
+// so one broken scope cannot produce one line per space.
+func (e *Engine) warn(msg string) {
+	e.warnMu.Lock()
+	defer e.warnMu.Unlock()
+	for _, w := range e.warns {
+		if w == msg {
+			return
+		}
+	}
+	e.warns = append(e.warns, msg)
+}
+
+func (e *Engine) warnings() []string {
+	e.warnMu.Lock()
+	defer e.warnMu.Unlock()
+	return e.warns
+}
+
+// saveNames persists whatever the directory learned this run. Only the caching
+// decorator has anything to save; a plain directory does not implement this.
+func (e *Engine) saveNames() {
+	if c, ok := e.dir.(nameCache); ok {
+		c.Flush()
+	}
+}
 
 // spaceTypeAliases maps the --type flag's values onto Space.spaceType.
 var spaceTypeAliases = map[string]string{
@@ -269,14 +300,17 @@ func (e *Engine) Run(ctx context.Context, q Query) (Result, error) {
 	scans, spaceErrs := e.scanSpaces(ctx, spaces, q, since, now, readAt, meID)
 	spaceErrs = append(readErrs, spaceErrs...)
 	scans = applyLimit(scans, q.Limit)
+	e.resolveNames(ctx, scans)
 	groups := group(scans, q, since)
 	groups = applyThreadLimit(groups, q.ThreadLimit)
 	recount(groups)
+	e.saveNames()
 
 	res := Result{
-		Spaces:  groups,
-		Errors:  spaceErrs,
-		Summary: Summary{Spaces: len(spaces), Window: windowLabel(since, q.Until, now)},
+		Spaces:   groups,
+		Errors:   spaceErrs,
+		Warnings: e.warnings(),
+		Summary:  Summary{Spaces: len(spaces), Window: windowLabel(since, q.Until, now)},
 	}
 	for _, g := range groups {
 		res.Summary.Threads += len(g.Threads)
@@ -589,6 +623,40 @@ func threadIDOf(m *chatapi.Message) string {
 	return m.Name
 }
 
+// resolveNames replaces raw users/… IDs with real people. Its position in Run
+// is deliberate: after applyLimit, so only people who will actually appear cost
+// a lookup, and before group, so spaceName can name a DM after the person in it
+// instead of after their ID. A directory failure is a warning and nothing more.
+func (e *Engine) resolveNames(ctx context.Context, scans []spaceScan) {
+	seen := map[string]bool{}
+	var ids []string
+	for _, sc := range scans {
+		for _, m := range sc.msgs {
+			if id := m.Sender.ID; id != "" && !seen[id] {
+				seen[id] = true
+				ids = append(ids, id)
+			}
+		}
+	}
+	if len(ids) == 0 {
+		return
+	}
+	people, err := e.dir.Lookup(ctx, ids)
+	if err != nil {
+		e.warn(nameWarning(err))
+	}
+	for i := range scans {
+		for j := range scans[i].msgs {
+			p, ok := people[scans[i].msgs[j].Sender.ID]
+			if !ok {
+				continue // leave the raw ID; an unknown name is not a failure
+			}
+			scans[i].msgs[j].Sender.Name = p.Name
+			scans[i].msgs[j].Sender.Email = p.Email
+		}
+	}
+}
+
 // applyLimit keeps the newest limit messages across every space. Cutting before
 // grouping means counts, thread labels, and partial flags are all computed on
 // exactly what will be displayed.
@@ -838,6 +906,7 @@ func (e *Engine) Spaces(ctx context.Context, q Query) (SpaceList, error) {
 			return SpaceList{}, err
 		}
 		var out SpaceList
+		out.Warnings = res.Warnings
 		for _, sg := range res.Spaces {
 			if sg.Space.UnreadCount == 0 {
 				continue

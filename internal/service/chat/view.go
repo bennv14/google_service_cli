@@ -21,12 +21,15 @@ type SpaceInfo struct {
 	Link         string     `json:"link,omitempty"`
 }
 
-// Sender is the author of a message.
+// Sender is the author of a message. ID is always the raw users/… resource
+// name; Name is a real person's name when the directory resolved one and the
+// raw ID otherwise.
 type Sender struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
-	Type string `json:"type"`
-	IsMe bool   `json:"isMe"`
+	ID    string `json:"id"`
+	Name  string `json:"name"`
+	Email string `json:"email,omitempty"`
+	Type  string `json:"type"`
+	IsMe  bool   `json:"isMe"`
 }
 
 // MessageInfo is one message. ThreadID is carried for flat rendering and
@@ -108,10 +111,11 @@ type RenderOpts struct {
 
 // Result is the full three-level output of a message query.
 type Result struct {
-	Spaces  []SpaceGroup
-	Summary Summary
-	Errors  []SpaceError
-	Opts    RenderOpts
+	Spaces   []SpaceGroup
+	Summary  Summary
+	Errors   []SpaceError
+	Warnings []string // stderr-only, like Summary; see Summary's comment
+	Opts     RenderOpts
 }
 
 // MarshalJSON emits just the space array; Summary and Errors are stderr-only.
@@ -146,8 +150,9 @@ func (r Result) Rows() [][]string {
 
 // SpaceList is the output of `gsvc chat spaces`.
 type SpaceList struct {
-	Spaces []SpaceInfo
-	Opts   RenderOpts
+	Spaces   []SpaceInfo
+	Warnings []string
+	Opts     RenderOpts
 }
 
 func (sl SpaceList) MarshalJSON() ([]byte, error) {
