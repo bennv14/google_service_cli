@@ -24,6 +24,11 @@ type Deps struct {
 	Out       output.Writer
 	NewClient func(ctx context.Context, scopes ...string) (*http.Client, error)
 
+	// ConfigDir is the per-user config directory. Services that keep state of
+	// their own — caches, scratch files — put it under here so it lands beside
+	// config.yaml and tokens/ rather than somewhere they have to invent.
+	ConfigDir string
+
 	// Scopes is the union of every registered service's OAuth scopes,
 	// used by `gsvc auth login`.
 	Scopes []string

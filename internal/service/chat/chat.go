@@ -8,15 +8,19 @@ import (
 
 	chatapi "google.golang.org/api/chat/v1"
 	"google.golang.org/api/option"
+	peopleapi "google.golang.org/api/people/v1"
 )
 
-// The three read-only scopes this service ever requests. All are restricted
-// scopes: in a Testing-mode OAuth consent screen the account must be listed as
-// a test user, and the Chat API must be enabled in the client's GCP project.
+// The four read-only scopes this service ever requests. The three Chat scopes
+// are restricted: in a Testing-mode OAuth consent screen the account must be
+// listed as a test user, and the Chat API must be enabled in the client's GCP
+// project. directory.readonly is what turns users/123456789 into a person's
+// name — the Chat API itself only ever returns the ID.
 var OAuthScopes = []string{
 	chatapi.ChatSpacesReadonlyScope,
 	chatapi.ChatMessagesReadonlyScope,
 	chatapi.ChatUsersReadstateReadonlyScope,
+	peopleapi.DirectoryReadonlyScope,
 }
 
 // Field masks keep responses small and make the wire format explicit.

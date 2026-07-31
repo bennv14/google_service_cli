@@ -102,6 +102,7 @@ func populateDeps(deps *service.Deps, profileFlag, outputFlag string, outputExpl
 	tokens := auth.NewFileTokenStore(filepath.Join(dir, "tokens"))
 
 	deps.Config = store
+	deps.ConfigDir = dir
 	deps.Tokens = tokens
 	deps.Scopes = serviceScopes(services)
 	deps.OutputFormat = outputFlag
