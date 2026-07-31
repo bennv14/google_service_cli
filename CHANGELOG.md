@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `gsvc chat` now shows people's names instead of raw `users/1234…` IDs, in
+  sender lines, thread labels, and DM space names. The Chat API leaves
+  `displayName` empty for every user when the caller authenticates as a person,
+  so names come from the People API instead. JSON output gains
+  `sender.email` alongside `sender.name`.
+- `--refresh-names` on every `chat` subcommand: ignore the cached display names
+  and look them up again.
+- Resolved names are cached in `<config>/cache/people-<profile>.json` for 30
+  days, per profile. Messages, threads, and read state are still never cached.
+
+### Changed
+
+- `gsvc auth login` now also requests `directory.readonly`. **Existing users
+  must run `gsvc auth login` again**, and enable the *People API* in the GCP
+  project behind their OAuth client. Until both are done, `chat` works exactly
+  as before and prints one warning line to stderr.
+
+### Removed
+
+- The `spaces.members.list` fallback for naming DMs. It required a scope `gsvc`
+  never requested, so it returned 403 on every call and its result was silently
+  discarded; the People API path replaces it.
+
 ## [v2.0.2] - 2026-07-31
 
 ### Added

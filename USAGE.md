@@ -76,6 +76,9 @@ project, the consent screen, and the quota.
 2. **Enable the APIs** you intend to use, under *APIs & Services → Library*:
    - *Google Drive API* — for `gsvc drive`
    - *Google Chat API* — for `gsvc chat`
+   - *People API* — for `gsvc chat` to show senders' names instead of raw
+     `users/1234…` IDs. Without it, chat commands still work and print a
+     one-line warning.
 3. Configure the **OAuth consent screen**. While it is in *Testing* mode, add
    your own Google account under *Test users* — the Chat scopes are restricted
    scopes and will be refused otherwise.
@@ -89,9 +92,12 @@ screen:
 | Service | Scopes |
 | --- | --- |
 | Drive | `drive.readonly`, `drive.file` |
-| Chat | `chat.spaces.readonly`, `chat.messages.readonly`, `chat.users.readstate.readonly` |
+| Chat | `chat.spaces.readonly`, `chat.messages.readonly`, `chat.users.readstate.readonly`, `directory.readonly` |
 
 All Chat scopes are read-only; `gsvc` never calls a mutating Chat endpoint.
+`directory.readonly` is what turns a sender's `users/1234…` ID into their name:
+the Chat API leaves `displayName` empty for every user when the caller
+authenticates as a person rather than as a Chat app.
 
 > **Google Chat requires a Google Workspace account.** The Chat API does not
 > serve consumer (`@gmail.com`) accounts. Drive works with both.
@@ -247,6 +253,7 @@ List the spaces you belong to. This lists *spaces*, never messages.
 | `--unread` | Only spaces with unread messages, with counts |
 | `--type <types>` | Restrict to `space`, `dm`, `group` (comma-separated) |
 | `--links` | Print URLs on their own lines instead of embedding them |
+| `--refresh-names` | Ignore cached display names and look them up again |
 
 ```bash
 gsvc chat spaces
@@ -271,6 +278,7 @@ All filters combine freely.
 | `--limit <n>` | `50` | Maximum messages in total (`0` = no limit) |
 | `--group <mode>` | adaptive | `space`, `thread`, or `flat` |
 | `--links` | | Print URLs on their own lines |
+| `--refresh-names` | | Ignore cached display names and look them up again |
 
 `--limit` keeps the **newest** matching messages, and counts only messages that
 pass every filter — `--mention-me --limit 20` gives you 20 mentions, not 20
@@ -391,9 +399,17 @@ Configuration lives in a per-user directory:
 ```
 google_service_cli/
 ├── config.yaml          # profiles and the active profile
+├── cache/
+│   └── people-<profile>.json   # resolved display names, mode 0600
 └── tokens/
     └── <profile>.json   # OAuth token, mode 0600
 ```
+
+`cache/people-<profile>.json` remembers the names behind Chat's `users/1234…`
+IDs for 30 days, so a 333-space account does not pay a directory lookup on every
+command. It is per profile, so one account never sees another's names. Deleting
+it is always safe; `--refresh-names` rebuilds it in place. Messages, threads, and
+read state are never cached — those must always be fresh.
 
 `config.yaml` looks like this:
 
@@ -425,6 +441,12 @@ after upgrading from v1.x, which requested Drive scopes only. Run
 **`the Google Chat API is not enabled for this OAuth client's GCP project`**
 Enable the *Google Chat API* in the project that owns your OAuth client, under
 *APIs & Services → Library*. Enabling can take a minute to propagate.
+
+**`warning: cannot resolve sender names`**
+Chat commands still work; senders show as raw `users/1234…` IDs. Either the
+*People API* is not enabled in your OAuth client's project, or your stored token
+predates the `directory.readonly` scope. Enable the API, then run
+`gsvc auth login` again.
 
 **`permission denied (check auth/scopes)`**
 A 403 that is neither of the two above. Common causes: the account is not listed
