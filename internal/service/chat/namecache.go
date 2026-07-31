@@ -69,7 +69,12 @@ func (c *cachedDirectory) load() {
 		return
 	}
 	if entries != nil {
-		c.entries = entries
+		now := c.now()
+		for id, e := range entries {
+			if now.Sub(e.At) < nameCacheTTL {
+				c.entries[id] = e
+			}
+		}
 	}
 }
 
@@ -85,13 +90,17 @@ func (c *cachedDirectory) Lookup(ctx context.Context, ids []string) (map[string]
 	c.load()
 	out := make(map[string]Person, len(ids))
 	var missing []string
+	seenMissing := make(map[string]bool)
 	for _, id := range ids {
 		e, ok := c.entries[id]
 		if c.usable(e, ok) {
 			out[id] = Person{Name: e.Name, Email: e.Email}
 			continue
 		}
-		missing = append(missing, id)
+		if !seenMissing[id] {
+			seenMissing[id] = true
+			missing = append(missing, id)
+		}
 	}
 	c.mu.Unlock()
 
@@ -141,7 +150,15 @@ func (c *cachedDirectory) Flush() {
 	}
 	c.dirty = false
 
-	b, err := json.Marshal(c.entries)
+	now := c.now()
+	clean := make(map[string]cacheEntry, len(c.entries))
+	for id, e := range c.entries {
+		if now.Sub(e.At) < nameCacheTTL {
+			clean[id] = e
+		}
+	}
+
+	b, err := json.Marshal(clean)
 	if err != nil {
 		return
 	}
