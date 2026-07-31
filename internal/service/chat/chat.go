@@ -88,9 +88,26 @@ func (c *Client) FindDirectMessage(ctx context.Context, userRef string) (*chatap
 	return c.svc.Spaces.FindDirectMessage().Context(ctx).Name(userRef).Fields(spaceFields).Do()
 }
 
-// ListMessages returns messages in a space matching filter, oldest-page-first,
-// stopping once limit messages have been collected. limit <= 0 means unlimited.
-func (c *Client) ListMessages(ctx context.Context, parent, filter string, limit int) ([]*chatapi.Message, error) {
+// ListOpts configures ListMessages.
+type ListOpts struct {
+	// Filter is the server-side messages.list filter expression.
+	Filter string
+	// Keep, when non-nil, decides which messages the caller actually wants. It
+	// runs inside the pagination loop so that Limit counts messages that
+	// survived it: a filter the API cannot express server-side (mentions,
+	// unread) must not be starved by a limit spent on discarded messages.
+	Keep func(*chatapi.Message) bool
+	// Limit caps the number of kept messages; <= 0 means unlimited.
+	Limit int
+}
+
+// ListMessages returns messages in a space matching o.Filter, oldest first,
+// stopping once o.Limit kept messages have been collected.
+//
+// Pages are requested newest-first. The API's own default is `create_time ASC`,
+// which would make a limited request return the OLDEST messages in the window —
+// the opposite of what every command here wants.
+func (c *Client) ListMessages(ctx context.Context, parent string, o ListOpts) ([]*chatapi.Message, error) {
 	var out []*chatapi.Message
 	token := ""
 	for page := 0; ; page++ {
@@ -98,14 +115,18 @@ func (c *Client) ListMessages(ctx context.Context, parent, filter string, limit 
 			return nil, fmt.Errorf("chat: list messages exceeded %d pages; refusing to keep paging", maxPages)
 		}
 		size := int64(pageSize)
-		if limit > 0 && int64(limit-len(out)) < size {
-			size = int64(limit - len(out))
+		// Shrinking the last page only works when every message is kept: with a
+		// Keep predicate, how many messages are still wanted says nothing about
+		// how many must be fetched to find them.
+		if o.Keep == nil && o.Limit > 0 && int64(o.Limit-len(out)) < size {
+			size = int64(o.Limit - len(out))
 		}
 		call := c.svc.Spaces.Messages.List(parent).Context(ctx).
 			PageSize(size).
+			OrderBy("createTime DESC").
 			Fields("messages(" + messageFields + "),nextPageToken")
-		if filter != "" {
-			call = call.Filter(filter)
+		if o.Filter != "" {
+			call = call.Filter(o.Filter)
 		}
 		if token != "" {
 			call = call.PageToken(token)
@@ -114,18 +135,32 @@ func (c *Client) ListMessages(ctx context.Context, parent, filter string, limit 
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, res.Messages...)
-		if res.NextPageToken == "" || (limit > 0 && len(out) >= limit) {
-			if limit > 0 && len(out) > limit {
-				out = out[:limit]
+		for _, m := range res.Messages {
+			if o.Keep != nil && !o.Keep(m) {
+				continue
 			}
-			return out, nil
+			out = append(out, m)
+			if o.Limit > 0 && len(out) >= o.Limit {
+				return oldestFirst(out), nil
+			}
+		}
+		if res.NextPageToken == "" {
+			return oldestFirst(out), nil
 		}
 		if res.NextPageToken == token {
 			return nil, fmt.Errorf("chat: list messages got a repeating page token %q; refusing to keep paging", token)
 		}
 		token = res.NextPageToken
 	}
+}
+
+// oldestFirst reverses newest-first pages back into the chronological order the
+// rest of the package works in.
+func oldestFirst(ms []*chatapi.Message) []*chatapi.Message {
+	for i, j := 0, len(ms)-1; i < j; i, j = i+1, j-1 {
+		ms[i], ms[j] = ms[j], ms[i]
+	}
+	return ms
 }
 
 // SpaceReadState returns the canonical resource name of the caller's read state

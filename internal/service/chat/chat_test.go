@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	chatapi "google.golang.org/api/chat/v1"
 	"google.golang.org/api/option"
 )
 
@@ -130,7 +131,7 @@ func TestListMessagesStopsOnRepeatingPageToken(t *testing.T) {
 		})
 	})
 
-	_, err := cl.ListMessages(context.Background(), "spaces/A", "", 0)
+	_, err := cl.ListMessages(context.Background(), "spaces/A", ListOpts{})
 	if err == nil {
 		t.Fatal("expected an error for a repeating page token, got nil")
 	}
@@ -155,14 +156,14 @@ func TestListMessagesSendsFilterAndStopsAtLimit(t *testing.T) {
 		gotFilter = r.URL.Query().Get("filter")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"messages": []map[string]any{
-				{"name": "spaces/A/messages/t.1", "text": "one", "createTime": "2026-07-20T01:00:00Z"},
 				{"name": "spaces/A/messages/t.2", "text": "two", "createTime": "2026-07-20T02:00:00Z"},
+				{"name": "spaces/A/messages/t.1", "text": "one", "createTime": "2026-07-20T01:00:00Z"},
 			},
 			"nextPageToken": "more",
 		})
 	})
 
-	msgs, err := cl.ListMessages(context.Background(), "spaces/A", filter, 2)
+	msgs, err := cl.ListMessages(context.Background(), "spaces/A", ListOpts{Filter: filter, Limit: 2})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,6 +175,75 @@ func TestListMessagesSendsFilterAndStopsAtLimit(t *testing.T) {
 	}
 	if len(msgs) != 2 || msgs[1].Text != "two" {
 		t.Fatalf("ListMessages() = %+v", msgs)
+	}
+}
+
+// The Chat API orders messages `create_time ASC` by default, so a limited
+// request must ask for DESC or it silently returns the OLDEST n messages.
+func TestListMessagesLimitTakesTheNewestNotTheOldest(t *testing.T) {
+	var gotOrder string
+	cl := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		gotOrder = r.URL.Query().Get("orderBy")
+		// A DESC-ordered server hands back the newest page first.
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"messages": []map[string]any{
+				{"name": "spaces/A/messages/t.5", "text": "newest", "createTime": "2026-07-20T05:00:00Z"},
+				{"name": "spaces/A/messages/t.4", "text": "newer", "createTime": "2026-07-20T04:00:00Z"},
+			},
+			"nextPageToken": "older",
+		})
+	})
+
+	msgs, err := cl.ListMessages(context.Background(), "spaces/A", ListOpts{Limit: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotOrder != "createTime DESC" {
+		t.Fatalf("orderBy = %q, want %q so that --limit cuts the newest end", gotOrder, "createTime DESC")
+	}
+	// Callers downstream expect oldest-first, so the newest page is reversed.
+	if len(msgs) != 2 || msgs[0].Text != "newer" || msgs[1].Text != "newest" {
+		t.Fatalf("ListMessages() = %+v, want oldest-first [newer newest]", msgs)
+	}
+}
+
+// Limit counts messages that survived Keep, so a client-side filter cannot be
+// starved by a limit that was spent on messages the caller discards.
+func TestListMessagesLimitCountsKeptMessages(t *testing.T) {
+	var calls int
+	cl := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if r.URL.Query().Get("pageToken") == "" {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"messages": []map[string]any{
+					{"name": "spaces/A/messages/t.5", "text": "skip", "createTime": "2026-07-20T05:00:00Z"},
+					{"name": "spaces/A/messages/t.4", "text": "keep me", "createTime": "2026-07-20T04:00:00Z"},
+					{"name": "spaces/A/messages/t.3", "text": "skip", "createTime": "2026-07-20T03:00:00Z"},
+				},
+				"nextPageToken": "p2",
+			})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"messages": []map[string]any{
+				{"name": "spaces/A/messages/t.2", "text": "keep me too", "createTime": "2026-07-20T02:00:00Z"},
+				{"name": "spaces/A/messages/t.1", "text": "skip", "createTime": "2026-07-20T01:00:00Z"},
+			},
+		})
+	})
+
+	msgs, err := cl.ListMessages(context.Background(), "spaces/A", ListOpts{
+		Limit: 2,
+		Keep:  func(m *chatapi.Message) bool { return strings.HasPrefix(m.Text, "keep") },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 {
+		t.Fatalf("expected the client to page on until 2 kept messages, got %d calls", calls)
+	}
+	if len(msgs) != 2 || msgs[0].Text != "keep me too" || msgs[1].Text != "keep me" {
+		t.Fatalf("ListMessages() = %+v, want the two kept messages oldest-first", msgs)
 	}
 }
 

@@ -272,6 +272,10 @@ All filters combine freely.
 | `--group <mode>` | adaptive | `space`, `thread`, or `flat` |
 | `--links` | | Print URLs on their own lines |
 
+`--limit` keeps the **newest** matching messages, and counts only messages that
+pass every filter — `--mention-me --limit 20` gives you 20 mentions, not 20
+messages that may or may not mention you.
+
 **Time bounds** (`--since` / `--until`) accept three forms:
 
 | Form | Examples |
@@ -306,6 +310,12 @@ Preset for `messages --unread` — unread messages across every space.
 gsvc chat unread
 gsvc chat unread --type dm --limit 20
 ```
+
+Each space is scanned from its own read marker, however far back that sits. A
+space you have never opened has no marker, so it is scanned over the default
+7-day window instead of its whole history — pass `--since` to widen it. Spaces
+whose read state cannot be read at all are reported as warnings on stderr rather
+than scanned.
 
 ### `chat mentions`
 
