@@ -345,3 +345,37 @@ func TestFindDirectMessageAndGetSpace(t *testing.T) {
 		t.Fatalf("GetSpace = %+v", sp)
 	}
 }
+
+func TestLatestMessagesAsksForNewestFirst(t *testing.T) {
+	var gotOrder, gotSize string
+	cl := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/spaces/DM1/messages" {
+			http.NotFound(w, r)
+			return
+		}
+		gotOrder = r.URL.Query().Get("orderBy")
+		gotSize = r.URL.Query().Get("pageSize")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"messages": []map[string]any{
+				{"name": "spaces/DM1/messages/t1.t1", "createTime": "2026-07-25T09:00:00Z",
+					"sender": map[string]any{"name": "users/1"}},
+			},
+		})
+	})
+
+	msgs, err := cl.LatestMessages(context.Background(), "spaces/DM1", 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The API defaults to create_time ASC, which would hand back the oldest
+	// message ever sent — the exact opposite of what the probe needs.
+	if gotOrder != "create_time DESC" {
+		t.Fatalf("orderBy = %q, want create_time DESC", gotOrder)
+	}
+	if gotSize != "5" {
+		t.Fatalf("pageSize = %q, want 5", gotSize)
+	}
+	if len(msgs) != 1 || msgs[0].Sender.Name != "users/1" {
+		t.Fatalf("LatestMessages = %+v", msgs)
+	}
+}
