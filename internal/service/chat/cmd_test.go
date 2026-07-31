@@ -57,6 +57,21 @@ func chatServer(t *testing.T) *httptest.Server {
 					},
 				},
 			})
+		case "/v1/people:batchGet":
+			names := map[string]string{"people/1": "Linh Tran", "people/2": "Huy Nguyen"}
+			var responses []map[string]any
+			for _, n := range r.URL.Query()["resourceNames"] {
+				if display, ok := names[n]; ok {
+					responses = append(responses, map[string]any{
+						"requestedResourceName": n,
+						"person": map[string]any{
+							"names":          []map[string]any{{"displayName": display}},
+							"emailAddresses": []map[string]any{{"value": strings.ToLower(strings.Split(display, " ")[0]) + "@example.com"}},
+						},
+					})
+				}
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"responses": responses})
 		default:
 			http.NotFound(w, r)
 		}
@@ -305,5 +320,21 @@ func TestChatRejectsBadTimeAndGroup(t *testing.T) {
 	cmd.SetErr(new(bytes.Buffer))
 	if err := cmd.ExecuteContext(context.Background()); err == nil {
 		t.Error("expected --group sideways to be rejected")
+	}
+}
+
+func TestChatMessagesShowsResolvedNames(t *testing.T) {
+	var out bytes.Buffer
+	cmd := New().Command(testDeps(t, chatServer(t), "json", true, &out))
+	cmd.SetArgs([]string{"messages", "--space", "spaces/A"})
+	cmd.SetErr(new(bytes.Buffer))
+	if err := cmd.ExecuteContext(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), `"Linh Tran"`) {
+		t.Fatalf("sender name was not resolved:\n%s", out.String())
+	}
+	if !strings.Contains(out.String(), `"linh@example.com"`) {
+		t.Fatalf("sender email was not resolved:\n%s", out.String())
 	}
 }

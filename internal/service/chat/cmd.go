@@ -116,8 +116,9 @@ func addSpaceTypeFlag(c *cobra.Command, f *queryFlags) {
 	c.Flags().StringSliceVar(&f.types, "type", nil, "restrict to space types: space, dm, group")
 }
 
-// engine builds a query engine for a command.
-func engine(ctx context.Context, d *service.Deps) (*Engine, error) {
+// engine builds a query engine for a command. The directory shares the Chat
+// client's transport: it is the same OAuth token, just a second API.
+func engine(ctx context.Context, d *service.Deps, f *queryFlags) (*Engine, error) {
 	hc, err := d.NewClient(ctx, OAuthScopes...)
 	if err != nil {
 		return nil, err
@@ -126,7 +127,11 @@ func engine(ctx context.Context, d *service.Deps) (*Engine, error) {
 	if err != nil {
 		return nil, err
 	}
-	return NewEngine(cl), nil
+	dir, err := newDirectory(ctx, d, hc, f.refreshNames)
+	if err != nil {
+		return nil, err
+	}
+	return NewEngine(cl, dir), nil
 }
 
 // newDirectory builds the name resolver for a command. Production always stacks
@@ -190,10 +195,11 @@ func isTerminal(w io.Writer) bool {
 	return err == nil && st.Mode()&os.ModeCharDevice != 0
 }
 
-// report writes per-space failures and the scan summary to stderr, so stdout
-// carries nothing but the result.
+// report writes warnings, per-space failures, and the scan summary to stderr,
+// so stdout carries nothing but the result.
 func report(cmd *cobra.Command, res Result) {
 	w := cmd.ErrOrStderr()
+	reportWarnings(w, res.Warnings)
 	for _, se := range res.Errors {
 		name := se.SpaceName
 		if name == "" {
@@ -202,6 +208,12 @@ func report(cmd *cobra.Command, res Result) {
 		fmt.Fprintf(w, "warning: %s: %v\n", name, gerr.Friendly(se.Err))
 	}
 	fmt.Fprintln(w, res.Summary)
+}
+
+func reportWarnings(w io.Writer, msgs []string) {
+	for _, m := range msgs {
+		fmt.Fprintf(w, "warning: %s\n", m)
+	}
 }
 
 // runQuery is the shared body of every message-reading command; adjust applies
@@ -221,7 +233,7 @@ func runQuery(cmd *cobra.Command, d *service.Deps, f *queryFlags, adjust func(*Q
 	if q.MentionsMe && q.Space == "" {
 		q.Progress = cmd.ErrOrStderr()
 	}
-	e, err := engine(ctx, d)
+	e, err := engine(ctx, d, f)
 	if err != nil {
 		return err
 	}
@@ -351,7 +363,7 @@ with its unread count. This lists spaces, never messages.`,
 				return err
 			}
 			q.AccountIndex = accountIndex(d)
-			e, err := engine(ctx, d)
+			e, err := engine(ctx, d, f)
 			if err != nil {
 				return err
 			}
@@ -363,6 +375,7 @@ with its unread count. This lists spaces, never messages.`,
 			if err := writer(d).Render(list); err != nil {
 				return err
 			}
+			reportWarnings(cmd.ErrOrStderr(), list.Warnings)
 			fmt.Fprintf(cmd.ErrOrStderr(), "listed %s\n", plural(len(list.Spaces), "space", "spaces"))
 			return nil
 		},

@@ -235,7 +235,7 @@ func TestResolveSpaceByID(t *testing.T) {
 	api := &fakeAPI{t: t, getSpace: func(name string) (*chatapi.Space, error) {
 		return &chatapi.Space{Name: name, DisplayName: "Alpha"}, nil
 	}}
-	sp, err := NewEngine(api).resolveSpace(context.Background(), "spaces/AAQA")
+	sp, err := NewEngine(api, nullDirectory{}).resolveSpace(context.Background(), "spaces/AAQA")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -253,7 +253,7 @@ func TestResolveSpaceByEmail(t *testing.T) {
 		gotRef = userRef
 		return &chatapi.Space{Name: "spaces/DM1", SpaceType: "DIRECT_MESSAGE"}, nil
 	}}
-	sp, err := NewEngine(api).resolveSpace(context.Background(), "linh@example.com")
+	sp, err := NewEngine(api, nullDirectory{}).resolveSpace(context.Background(), "linh@example.com")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -271,7 +271,7 @@ func TestResolveSpaceByDisplayName(t *testing.T) {
 		{Name: "spaces/B", DisplayName: "Backend Team Social"},
 		{Name: "spaces/C", DisplayName: "Frontend"},
 	}}
-	e := NewEngine(api)
+	e := NewEngine(api, nullDirectory{})
 
 	// An exact case-insensitive match wins over the substring match.
 	sp, err := e.resolveSpace(context.Background(), "backend team")
@@ -294,7 +294,7 @@ func TestResolveSpaceAmbiguousListsCandidates(t *testing.T) {
 		{Name: "spaces/A", DisplayName: "Backend Team"},
 		{Name: "spaces/B", DisplayName: "Backend Platform"},
 	}}
-	_, err := NewEngine(api).resolveSpace(context.Background(), "Backend")
+	_, err := NewEngine(api, nullDirectory{}).resolveSpace(context.Background(), "Backend")
 	if err == nil {
 		t.Fatal("expected an ambiguity error")
 	}
@@ -307,7 +307,7 @@ func TestResolveSpaceAmbiguousListsCandidates(t *testing.T) {
 
 func TestResolveSpaceNotFound(t *testing.T) {
 	api := &fakeAPI{t: t, spaces: []*chatapi.Space{{Name: "spaces/A", DisplayName: "Alpha"}}}
-	_, err := NewEngine(api).resolveSpace(context.Background(), "Nope")
+	_, err := NewEngine(api, nullDirectory{}).resolveSpace(context.Background(), "Nope")
 	if err == nil || !strings.Contains(err.Error(), "Nope") {
 		t.Fatalf("err = %v", err)
 	}
@@ -353,7 +353,7 @@ func TestRunFansOutAndOrdersSpacesByRecency(t *testing.T) {
 		},
 	}
 
-	res, err := NewEngine(api).Run(context.Background(), Query{Now: fixedTime(t, "2026-07-26T00:00:00Z")})
+	res, err := NewEngine(api, nullDirectory{}).Run(context.Background(), Query{Now: fixedTime(t, "2026-07-26T00:00:00Z")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -379,7 +379,7 @@ func TestRunAppliesDefaultWindowWhenScanningEverySpace(t *testing.T) {
 			return nil, nil
 		},
 	}
-	if _, err := NewEngine(api).Run(context.Background(), Query{Now: now}); err != nil {
+	if _, err := NewEngine(api, nullDirectory{}).Run(context.Background(), Query{Now: now}); err != nil {
 		t.Fatal(err)
 	}
 	if want := `create_time > "2026-07-19T00:00:00Z"`; gotFilter != want {
@@ -399,7 +399,7 @@ func TestRunSkipsDefaultWindowForSingleSpaceAndForUnread(t *testing.T) {
 			return nil, nil
 		},
 	}
-	if _, err := NewEngine(single).Run(context.Background(), Query{Space: "spaces/A", Now: now}); err != nil {
+	if _, err := NewEngine(single, nullDirectory{}).Run(context.Background(), Query{Space: "spaces/A", Now: now}); err != nil {
 		t.Fatal(err)
 	}
 	if singleFilter != "" {
@@ -416,7 +416,7 @@ func TestRunSkipsDefaultWindowForSingleSpaceAndForUnread(t *testing.T) {
 			return nil, nil
 		},
 	}
-	if _, err := NewEngine(unread).Run(context.Background(), Query{UnreadOnly: true, Now: now}); err != nil {
+	if _, err := NewEngine(unread, nullDirectory{}).Run(context.Background(), Query{UnreadOnly: true, Now: now}); err != nil {
 		t.Fatal(err)
 	}
 	if want := `create_time > "2026-07-01T00:00:00Z"`; unreadFilter != want {
@@ -437,7 +437,7 @@ func TestRunUsesPerSpaceReadMarkers(t *testing.T) {
 		}),
 		messages: func(string, ListOpts) ([]*chatapi.Message, error) { return nil, nil },
 	}
-	if _, err := NewEngine(api).Run(context.Background(), Query{UnreadOnly: true, Now: fixedTime(t, "2026-07-26T00:00:00Z")}); err != nil {
+	if _, err := NewEngine(api, nullDirectory{}).Run(context.Background(), Query{UnreadOnly: true, Now: fixedTime(t, "2026-07-26T00:00:00Z")}); err != nil {
 		t.Fatal(err)
 	}
 	fa, _ := api.msgFilters.Load("spaces/A")
@@ -459,7 +459,7 @@ func TestUnreadExcludesYourOwnMessages(t *testing.T) {
 			}, nil
 		},
 	}
-	res, err := NewEngine(api).Run(context.Background(), Query{UnreadOnly: true, Now: fixedTime(t, "2026-07-26T00:00:00Z")})
+	res, err := NewEngine(api, nullDirectory{}).Run(context.Background(), Query{UnreadOnly: true, Now: fixedTime(t, "2026-07-26T00:00:00Z")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -488,7 +488,7 @@ func TestMentionsMeFiltersClientSide(t *testing.T) {
 			}, nil
 		},
 	}
-	res, err := NewEngine(api).Run(context.Background(), Query{MentionsMe: true, Now: fixedTime(t, "2026-07-26T00:00:00Z")})
+	res, err := NewEngine(api, nullDirectory{}).Run(context.Background(), Query{MentionsMe: true, Now: fixedTime(t, "2026-07-26T00:00:00Z")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -513,7 +513,7 @@ func TestThreadIsPartialWhenItsHeadIsOutsideTheWindow(t *testing.T) {
 			}, nil
 		},
 	}
-	res, err := NewEngine(api).Run(context.Background(), Query{Now: fixedTime(t, "2026-07-26T00:00:00Z")})
+	res, err := NewEngine(api, nullDirectory{}).Run(context.Background(), Query{Now: fixedTime(t, "2026-07-26T00:00:00Z")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -550,7 +550,7 @@ func TestLimitCutsNewestFirstAcrossAllSpaces(t *testing.T) {
 			}
 		},
 	}
-	res, err := NewEngine(api).Run(context.Background(), Query{Limit: 2, Now: fixedTime(t, "2026-07-26T00:00:00Z")})
+	res, err := NewEngine(api, nullDirectory{}).Run(context.Background(), Query{Limit: 2, Now: fixedTime(t, "2026-07-26T00:00:00Z")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -583,7 +583,7 @@ func TestThreadLimitCutsThreadsNotMessages(t *testing.T) {
 			}, nil
 		},
 	}
-	res, err := NewEngine(api).Run(context.Background(), Query{ThreadLimit: 1, Now: fixedTime(t, "2026-07-26T00:00:00Z")})
+	res, err := NewEngine(api, nullDirectory{}).Run(context.Background(), Query{ThreadLimit: 1, Now: fixedTime(t, "2026-07-26T00:00:00Z")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -611,7 +611,7 @@ func TestOneFailingSpaceDoesNotKillTheCommand(t *testing.T) {
 			}, nil
 		},
 	}
-	res, err := NewEngine(api).Run(context.Background(), Query{Now: fixedTime(t, "2026-07-26T00:00:00Z")})
+	res, err := NewEngine(api, nullDirectory{}).Run(context.Background(), Query{Now: fixedTime(t, "2026-07-26T00:00:00Z")})
 	if err != nil {
 		t.Fatalf("one bad space must not fail the whole run: %v", err)
 	}
@@ -637,7 +637,7 @@ func TestDMNameComesFromTheOtherParticipant(t *testing.T) {
 			}, nil
 		},
 	}
-	res, err := NewEngine(api).Run(context.Background(), Query{UnreadOnly: false, MentionsMe: false, Now: fixedTime(t, "2026-07-26T00:00:00Z")})
+	res, err := NewEngine(api, nullDirectory{}).Run(context.Background(), Query{UnreadOnly: false, MentionsMe: false, Now: fixedTime(t, "2026-07-26T00:00:00Z")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -660,12 +660,208 @@ func TestSpaceTypeFilterLimitsTheScan(t *testing.T) {
 			return nil, nil
 		},
 	}
-	res, err := NewEngine(api).Run(context.Background(), Query{SpaceTypes: []string{"space"}, Now: fixedTime(t, "2026-07-26T00:00:00Z")})
+	res, err := NewEngine(api, nullDirectory{}).Run(context.Background(), Query{SpaceTypes: []string{"space"}, Now: fixedTime(t, "2026-07-26T00:00:00Z")})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if res.Summary.Spaces != 1 {
 		t.Fatalf("summary.Spaces = %d, want 1", res.Summary.Spaces)
+	}
+}
+
+// fakeDirectory answers from a fixed map and records what it was asked.
+type fakeDirectory struct {
+	people map[string]Person
+	err    error
+	mu     sync.Mutex
+	asked  []string
+	calls  int
+}
+
+func (f *fakeDirectory) Lookup(_ context.Context, ids []string) (map[string]Person, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls++
+	f.asked = append(f.asked, ids...)
+	out := map[string]Person{}
+	for _, id := range ids {
+		if p, ok := f.people[id]; ok {
+			out[id] = p
+		}
+	}
+	return out, f.err
+}
+
+func TestSenderNamesAndEmailsComeFromTheDirectory(t *testing.T) {
+	api := &fakeAPI{
+		t:      t,
+		spaces: []*chatapi.Space{{Name: "spaces/A", DisplayName: "Alpha"}},
+		messages: func(string, ListOpts) ([]*chatapi.Message, error) {
+			return []*chatapi.Message{
+				rawMsg("spaces/A/messages/t1.t1", "spaces/A/threads/t1", "users/1", "", "hello", "2026-07-25T09:00:00Z"),
+			}, nil
+		},
+	}
+	dir := &fakeDirectory{people: map[string]Person{
+		"users/1": {Name: "Linh Tran", Email: "linh@example.com"},
+	}}
+	res, err := NewEngine(api, dir).Run(context.Background(), Query{Now: fixedTime(t, "2026-07-26T00:00:00Z")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := res.Spaces[0].Threads[0].Messages[0]
+	if m.Sender.Name != "Linh Tran" || m.Sender.Email != "linh@example.com" {
+		t.Fatalf("sender = %+v", m.Sender)
+	}
+	if m.Sender.ID != "users/1" {
+		t.Fatalf("the raw ID must survive in Sender.ID, got %q", m.Sender.ID)
+	}
+	if len(res.Warnings) != 0 {
+		t.Fatalf("warnings = %v, want none", res.Warnings)
+	}
+}
+
+func TestUnresolvedSenderKeepsItsRawID(t *testing.T) {
+	api := &fakeAPI{
+		t:      t,
+		spaces: []*chatapi.Space{{Name: "spaces/A", DisplayName: "Alpha"}},
+		messages: func(string, ListOpts) ([]*chatapi.Message, error) {
+			return []*chatapi.Message{
+				rawMsg("spaces/A/messages/t1.t1", "spaces/A/threads/t1", "users/9", "", "hello", "2026-07-25T09:00:00Z"),
+			}, nil
+		},
+	}
+	res, err := NewEngine(api, &fakeDirectory{}).Run(context.Background(), Query{Now: fixedTime(t, "2026-07-26T00:00:00Z")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := res.Spaces[0].Threads[0].Messages[0].Sender.Name; got != "users/9" {
+		t.Fatalf("sender name = %q, want the raw ID", got)
+	}
+}
+
+// The lookup runs after --limit, so nobody who was cut is ever resolved.
+func TestResolveNamesRunsAfterTheLimit(t *testing.T) {
+	api := &fakeAPI{
+		t:      t,
+		spaces: []*chatapi.Space{{Name: "spaces/A", DisplayName: "Alpha"}},
+		messages: func(string, ListOpts) ([]*chatapi.Message, error) {
+			return []*chatapi.Message{
+				rawMsg("spaces/A/messages/t1.t1", "spaces/A/threads/t1", "users/1", "", "old", "2026-07-20T09:00:00Z"),
+				rawMsg("spaces/A/messages/t2.t2", "spaces/A/threads/t2", "users/2", "", "new", "2026-07-25T09:00:00Z"),
+			}, nil
+		},
+	}
+	dir := &fakeDirectory{people: map[string]Person{
+		"users/1": {Name: "Linh Tran"},
+		"users/2": {Name: "Huy Nguyen"},
+	}}
+	if _, err := NewEngine(api, dir).Run(context.Background(), Query{Limit: 1, Now: fixedTime(t, "2026-07-26T00:00:00Z")}); err != nil {
+		t.Fatal(err)
+	}
+	if len(dir.asked) != 1 || dir.asked[0] != "users/2" {
+		t.Fatalf("directory was asked for %v, want only the sender that survived --limit", dir.asked)
+	}
+}
+
+func TestDirectoryIsAskedOnceForEachDistinctSender(t *testing.T) {
+	api := &fakeAPI{
+		t: t,
+		spaces: []*chatapi.Space{
+			{Name: "spaces/A", DisplayName: "Alpha"},
+			{Name: "spaces/B", DisplayName: "Beta"},
+		},
+		messages: func(parent string, _ ListOpts) ([]*chatapi.Message, error) {
+			return []*chatapi.Message{
+				rawMsg(parent+"/messages/t1.t1", parent+"/threads/t1", "users/1", "", "one", "2026-07-25T09:00:00Z"),
+				rawMsg(parent+"/messages/t1.t2", parent+"/threads/t1", "users/1", "", "two", "2026-07-25T09:01:00Z"),
+			}, nil
+		},
+	}
+	dir := &fakeDirectory{people: map[string]Person{"users/1": {Name: "Linh Tran"}}}
+	if _, err := NewEngine(api, dir).Run(context.Background(), Query{Now: fixedTime(t, "2026-07-26T00:00:00Z")}); err != nil {
+		t.Fatal(err)
+	}
+	if dir.calls != 1 || len(dir.asked) != 1 {
+		t.Fatalf("directory calls=%d asked=%v, want one call for one distinct sender", dir.calls, dir.asked)
+	}
+}
+
+func TestDMIsNamedAfterTheResolvedOtherParticipant(t *testing.T) {
+	api := &fakeAPI{
+		t: t,
+		spaces: []*chatapi.Space{
+			{Name: "spaces/DM1", SpaceType: "DIRECT_MESSAGE", SpaceThreadingState: "UNTHREADED_MESSAGES"},
+		},
+		readState: readStateFor(nil),
+		messages: func(string, ListOpts) ([]*chatapi.Message, error) {
+			return []*chatapi.Message{
+				rawMsg("spaces/DM1/messages/t1.t1", "spaces/DM1/threads/t1", meUser, "", "mine", "2026-07-25T09:00:00Z"),
+				rawMsg("spaces/DM1/messages/t2.t2", "spaces/DM1/threads/t2", "users/1", "", "theirs", "2026-07-25T09:01:00Z"),
+			}, nil
+		},
+	}
+	dir := &fakeDirectory{people: map[string]Person{
+		meUser:    {Name: "Ben"},
+		"users/1": {Name: "Linh Tran"},
+	}}
+	res, err := NewEngine(api, dir).Run(context.Background(), Query{Now: fixedTime(t, "2026-07-26T00:00:00Z")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Spaces[0].Space.Name != "Linh Tran" {
+		t.Fatalf("DM name = %q, want the resolved other participant", res.Spaces[0].Space.Name)
+	}
+}
+
+// A directory failure warns and leaves raw IDs; it never fails the read.
+func TestDirectoryFailureWarnsAndKeepsTheResult(t *testing.T) {
+	api := &fakeAPI{
+		t:      t,
+		spaces: []*chatapi.Space{{Name: "spaces/A", DisplayName: "Alpha"}},
+		messages: func(string, ListOpts) ([]*chatapi.Message, error) {
+			return []*chatapi.Message{
+				rawMsg("spaces/A/messages/t1.t1", "spaces/A/threads/t1", "users/1", "", "hello", "2026-07-25T09:00:00Z"),
+			}, nil
+		},
+	}
+	dir := &fakeDirectory{err: errors.New("403 ACCESS_TOKEN_SCOPE_INSUFFICIENT")}
+	res, err := NewEngine(api, dir).Run(context.Background(), Query{Now: fixedTime(t, "2026-07-26T00:00:00Z")})
+	if err != nil {
+		t.Fatalf("a directory failure must not fail the run: %v", err)
+	}
+	if res.Summary.Messages != 1 {
+		t.Fatalf("summary = %+v, want the message to have survived", res.Summary)
+	}
+	if got := res.Spaces[0].Threads[0].Messages[0].Sender.Name; got != "users/1" {
+		t.Fatalf("sender name = %q, want the raw ID", got)
+	}
+	if len(res.Warnings) != 1 || !strings.Contains(res.Warnings[0], "gsvc auth login") {
+		t.Fatalf("warnings = %v", res.Warnings)
+	}
+}
+
+// The degenerate case has to stay safe: no directory, no change in output.
+func TestNullDirectoryLeavesTheOutputUnchanged(t *testing.T) {
+	api := &fakeAPI{
+		t:      t,
+		spaces: []*chatapi.Space{{Name: "spaces/A", DisplayName: "Alpha"}},
+		messages: func(string, ListOpts) ([]*chatapi.Message, error) {
+			return []*chatapi.Message{
+				rawMsg("spaces/A/messages/t1.t1", "spaces/A/threads/t1", "users/1", "", "hello", "2026-07-25T09:00:00Z"),
+			}, nil
+		},
+	}
+	res, err := NewEngine(api, nullDirectory{}).Run(context.Background(), Query{Now: fixedTime(t, "2026-07-26T00:00:00Z")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := res.Spaces[0].Threads[0].Messages[0]
+	if m.Sender.Name != "users/1" || m.Sender.Email != "" {
+		t.Fatalf("sender = %+v, want the untouched raw ID", m.Sender)
+	}
+	if len(res.Warnings) != 0 {
+		t.Fatalf("warnings = %v, want none", res.Warnings)
 	}
 }
 
@@ -685,7 +881,7 @@ func TestMentionsSurviveTheMessageLimit(t *testing.T) {
 			}, nil
 		},
 	}
-	res, err := NewEngine(api).Run(context.Background(), Query{
+	res, err := NewEngine(api, nullDirectory{}).Run(context.Background(), Query{
 		MentionsMe: true, Limit: 2, Now: fixedTime(t, "2026-07-26T00:00:00Z"),
 	})
 	if err != nil {
@@ -712,7 +908,7 @@ func TestUnreadSurvivesTheMessageLimit(t *testing.T) {
 			}, nil
 		},
 	}
-	res, err := NewEngine(api).Run(context.Background(), Query{
+	res, err := NewEngine(api, nullDirectory{}).Run(context.Background(), Query{
 		UnreadOnly: true, Limit: 2, Now: fixedTime(t, "2026-07-26T00:00:00Z"),
 	})
 	if err != nil {
@@ -738,7 +934,7 @@ func TestUnreadTreatsNeverReadSpaceAsFullyUnreadWithinDefaultWindow(t *testing.T
 			}, nil
 		},
 	}
-	res, err := NewEngine(api).Run(context.Background(), Query{
+	res, err := NewEngine(api, nullDirectory{}).Run(context.Background(), Query{
 		UnreadOnly: true, Now: fixedTime(t, "2026-07-26T00:00:00Z"),
 	})
 	if err != nil {
@@ -774,7 +970,7 @@ func TestUnreadReportsSpacesWhoseReadStateFailed(t *testing.T) {
 			return nil, nil
 		},
 	}
-	res, err := NewEngine(api).Run(context.Background(), Query{
+	res, err := NewEngine(api, nullDirectory{}).Run(context.Background(), Query{
 		UnreadOnly: true, Now: fixedTime(t, "2026-07-26T00:00:00Z"),
 	})
 	if err != nil {
