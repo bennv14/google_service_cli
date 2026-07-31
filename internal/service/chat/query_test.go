@@ -3,6 +3,7 @@ package chat
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -101,6 +102,7 @@ type fakeAPI struct {
 	getSpace   func(name string) (*chatapi.Space, error)
 	findDM     func(userRef string) (*chatapi.Space, error)
 	messages   func(parent string, o ListOpts) ([]*chatapi.Message, error)
+	latest     func(parent string, n int) ([]*chatapi.Message, error)
 	readState  func(spaceName string) (string, time.Time, error)
 	listErr    error
 	listCalls  int32
@@ -150,6 +152,13 @@ func (f *fakeAPI) ListMessages(_ context.Context, parent string, o ListOpts) ([]
 		kept = kept[len(kept)-o.Limit:]
 	}
 	return kept, nil
+}
+
+func (f *fakeAPI) LatestMessages(_ context.Context, parent string, n int) ([]*chatapi.Message, error) {
+	if f.latest == nil {
+		f.t.Fatalf("unexpected LatestMessages(%q)", parent)
+	}
+	return f.latest(parent, n)
 }
 
 // SpaceReadState answers with a canonical name by default: every Run resolves
@@ -862,6 +871,125 @@ func TestNullDirectoryLeavesTheOutputUnchanged(t *testing.T) {
 	}
 	if len(res.Warnings) != 0 {
 		t.Fatalf("warnings = %v, want none", res.Warnings)
+	}
+}
+
+func TestSpacesNamesDMsAfterTheOtherParticipant(t *testing.T) {
+	api := &fakeAPI{
+		t: t,
+		spaces: []*chatapi.Space{
+			{Name: "spaces/A", DisplayName: "Alpha", SpaceType: "SPACE"},
+			{Name: "spaces/DM1", SpaceType: "DIRECT_MESSAGE"},
+		},
+		latest: func(parent string, _ int) ([]*chatapi.Message, error) {
+			// Newest first, and the newest is our own — the common case in a DM
+			// you spoke in last.
+			return []*chatapi.Message{
+				rawMsg("spaces/DM1/messages/t2.t2", "spaces/DM1/threads/t2", meUser, "", "mine", "2026-07-25T10:00:00Z"),
+				rawMsg("spaces/DM1/messages/t1.t1", "spaces/DM1/threads/t1", "users/1", "", "theirs", "2026-07-25T09:00:00Z"),
+			}, nil
+		},
+	}
+	dir := &fakeDirectory{people: map[string]Person{"users/1": {Name: "Linh Tran"}}}
+	list, err := NewEngine(api, dir).Spaces(context.Background(), Query{Now: fixedTime(t, "2026-07-26T00:00:00Z")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	byID := map[string]string{}
+	for _, s := range list.Spaces {
+		byID[s.ID] = s.Name
+	}
+	if byID["spaces/A"] != "Alpha" {
+		t.Errorf("a named space must keep its own name, got %q", byID["spaces/A"])
+	}
+	if byID["spaces/DM1"] != "Linh Tran" {
+		t.Errorf("DM name = %q, want the other participant", byID["spaces/DM1"])
+	}
+}
+
+// A space with no messages has no other source for a name, so it keeps its
+// short ID rather than inventing one.
+func TestSpacesKeepsTheShortIDWhenThereIsNothingToProbe(t *testing.T) {
+	api := &fakeAPI{
+		t:      t,
+		spaces: []*chatapi.Space{{Name: "spaces/DM1", SpaceType: "DIRECT_MESSAGE"}},
+		latest: func(string, int) ([]*chatapi.Message, error) { return nil, nil },
+	}
+	list, err := NewEngine(api, &fakeDirectory{}).Spaces(context.Background(), Query{Now: fixedTime(t, "2026-07-26T00:00:00Z")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if list.Spaces[0].Name != "DM1" {
+		t.Fatalf("name = %q, want the short ID", list.Spaces[0].Name)
+	}
+}
+
+// The probe is one request per nameless space, so a remembered name has to skip
+// it entirely — that is the difference between ~3s and ~0.7s.
+func TestSpacesSkipsTheProbeForARememberedName(t *testing.T) {
+	api := &fakeAPI{
+		t:      t,
+		spaces: []*chatapi.Space{{Name: "spaces/DM1", SpaceType: "DIRECT_MESSAGE"}},
+		latest: func(parent string, _ int) ([]*chatapi.Message, error) {
+			t.Errorf("probed %q despite a cached name", parent)
+			return nil, nil
+		},
+	}
+	cache := newCachedDirectory(&fakeDirectory{}, filepath.Join(t.TempDir(), "people-test.json"), false)
+	cache.Remember("spaces/DM1", Person{Name: "Linh Tran"})
+
+	list, err := NewEngine(api, cache).Spaces(context.Background(), Query{Now: fixedTime(t, "2026-07-26T00:00:00Z")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if list.Spaces[0].Name != "Linh Tran" {
+		t.Fatalf("name = %q, want the remembered one", list.Spaces[0].Name)
+	}
+}
+
+func TestSpacesRemembersWhatItProbed(t *testing.T) {
+	api := &fakeAPI{
+		t:      t,
+		spaces: []*chatapi.Space{{Name: "spaces/DM1", SpaceType: "DIRECT_MESSAGE"}},
+		latest: func(string, int) ([]*chatapi.Message, error) {
+			return []*chatapi.Message{
+				rawMsg("spaces/DM1/messages/t1.t1", "spaces/DM1/threads/t1", "users/1", "", "hi", "2026-07-25T09:00:00Z"),
+			}, nil
+		},
+	}
+	path := filepath.Join(t.TempDir(), "people-test.json")
+	cache := newCachedDirectory(&fakeDirectory{people: map[string]Person{"users/1": {Name: "Linh Tran"}}}, path, false)
+
+	if _, err := NewEngine(api, cache).Spaces(context.Background(), Query{Now: fixedTime(t, "2026-07-26T00:00:00Z")}); err != nil {
+		t.Fatal(err)
+	}
+	reload := newCachedDirectory(&fakeDirectory{}, path, false)
+	p, ok := reload.Recall("spaces/DM1")
+	if !ok || p.Name != "Linh Tran" {
+		t.Fatalf("Recall = %+v, %v; the probed name must survive to the next run", p, ok)
+	}
+}
+
+func TestSpacesWarnsWhenTheDirectoryFails(t *testing.T) {
+	api := &fakeAPI{
+		t:      t,
+		spaces: []*chatapi.Space{{Name: "spaces/DM1", SpaceType: "DIRECT_MESSAGE"}},
+		latest: func(string, int) ([]*chatapi.Message, error) {
+			return []*chatapi.Message{
+				rawMsg("spaces/DM1/messages/t1.t1", "spaces/DM1/threads/t1", "users/1", "", "hi", "2026-07-25T09:00:00Z"),
+			}, nil
+		},
+	}
+	dir := &fakeDirectory{err: errors.New("403 ACCESS_TOKEN_SCOPE_INSUFFICIENT")}
+	list, err := NewEngine(api, dir).Spaces(context.Background(), Query{Now: fixedTime(t, "2026-07-26T00:00:00Z")})
+	if err != nil {
+		t.Fatalf("a directory failure must not fail chat spaces: %v", err)
+	}
+	if list.Spaces[0].Name != "DM1" {
+		t.Fatalf("name = %q, want the short ID fallback", list.Spaces[0].Name)
+	}
+	if len(list.Warnings) != 1 {
+		t.Fatalf("warnings = %v, want one", list.Warnings)
 	}
 }
 

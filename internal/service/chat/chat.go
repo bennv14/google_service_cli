@@ -29,6 +29,9 @@ const (
 	messageFields = "name,createTime,text,sender(name,displayName,type)," +
 		"thread(name),annotations(type,userMention(type,user(name,displayName)))"
 	pageSize = 1000
+
+	// probeFields is all the newest-message probe needs: who sent it.
+	probeFields = "sender(name)"
 )
 
 // maxPages is a runaway guard on the pagination loops below, not a Chat API
@@ -184,4 +187,19 @@ func (c *Client) SpaceReadState(ctx context.Context, spaceName string) (string, 
 		return "", time.Time{}, fmt.Errorf("chat: space %s has a malformed lastReadTime %q: %w", spaceName, rs.LastReadTime, err)
 	}
 	return rs.Name, ts, nil
+}
+
+// LatestMessages returns up to n of a space's newest messages, newest first.
+// messages.list defaults to create_time ASC, so without the explicit ordering
+// this would hand back the oldest messages in the space instead.
+func (c *Client) LatestMessages(ctx context.Context, parent string, n int) ([]*chatapi.Message, error) {
+	res, err := c.svc.Spaces.Messages.List(parent).Context(ctx).
+		PageSize(int64(n)).
+		OrderBy("create_time DESC").
+		Fields("messages(" + probeFields + ")").
+		Do()
+	if err != nil {
+		return nil, err
+	}
+	return res.Messages, nil
 }

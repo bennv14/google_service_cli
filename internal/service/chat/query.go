@@ -92,6 +92,7 @@ type API interface {
 	FindDirectMessage(ctx context.Context, userRef string) (*chatapi.Space, error)
 	ListMessages(ctx context.Context, parent string, o ListOpts) ([]*chatapi.Message, error)
 	SpaceReadState(ctx context.Context, spaceName string) (string, time.Time, error)
+	LatestMessages(ctx context.Context, parent string, n int) ([]*chatapi.Message, error)
 }
 
 var _ API = (*Client)(nil)
@@ -895,6 +896,103 @@ func recount(groups []SpaceGroup) {
 	}
 }
 
+// spaceProbeMessages is how deep the DM-naming probe reads. It is more than one
+// because the newest message in a DM you spoke in last is your own, and naming
+// the space after yourself is worse than not naming it at all.
+const spaceProbeMessages = 5
+
+// spaceNames names the spaces the API left nameless — DMs and group chats never
+// carry a displayName. No endpoint answers this, so the other party is inferred
+// from the space's newest messages: one request per nameless space, which on a
+// 333-space account is the difference between 0.7s and 3s. The answer is
+// therefore remembered under the space's own resource name, and later runs skip
+// the probe entirely.
+func (e *Engine) spaceNames(ctx context.Context, spaces []*chatapi.Space) map[string]string {
+	cache, _ := e.dir.(nameCache)
+	out := map[string]string{}
+	var probe []*chatapi.Space
+	for _, sp := range spaces {
+		if sp.DisplayName != "" {
+			continue
+		}
+		if cache != nil {
+			if p, ok := cache.Recall(sp.Name); ok {
+				out[sp.Name] = p.Name
+				continue
+			}
+		}
+		probe = append(probe, sp)
+	}
+	if len(probe) == 0 {
+		return out
+	}
+
+	// Our own ID is what keeps a DM from being named after us. Failing to learn
+	// it only risks a wrong-looking name, so it is not worth failing over.
+	meID, _ := e.userID(ctx, probe[0].Name)
+
+	senders := e.probeSenders(ctx, probe, meID)
+	ids := make([]string, 0, len(senders))
+	seen := map[string]bool{}
+	for _, id := range senders {
+		if !seen[id] {
+			seen[id] = true
+			ids = append(ids, id)
+		}
+	}
+	if len(ids) == 0 {
+		return out
+	}
+	people, err := e.dir.Lookup(ctx, ids)
+	if err != nil {
+		e.warn(nameWarning(err))
+	}
+	for spaceName, senderID := range senders {
+		p, ok := people[senderID]
+		if !ok {
+			continue
+		}
+		out[spaceName] = p.Name
+		if cache != nil {
+			cache.Remember(spaceName, Person{Name: p.Name})
+		}
+	}
+	return out
+}
+
+// probeSenders finds the other party in each space by reading its newest
+// messages. A space we cannot read simply goes unnamed.
+func (e *Engine) probeSenders(ctx context.Context, spaces []*chatapi.Space, meID string) map[string]string {
+	out := make(map[string]string, len(spaces))
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, maxConcurrentSpaces)
+	for _, sp := range spaces {
+		wg.Add(1)
+		go func(sp *chatapi.Space) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			msgs, err := e.api.LatestMessages(ctx, sp.Name, spaceProbeMessages)
+			if err != nil {
+				return
+			}
+			for _, m := range msgs {
+				if m.Sender == nil || m.Sender.Name == "" || m.Sender.Name == meID {
+					continue
+				}
+				mu.Lock()
+				out[sp.Name] = m.Sender.Name
+				mu.Unlock()
+				return
+			}
+		}(sp)
+	}
+	wg.Wait()
+	return out
+}
+
 // Spaces lists the spaces the caller belongs to. Without UnreadOnly this is a
 // single spaces.list call and every space is returned, including quiet ones.
 // With UnreadOnly it runs a full scan and keeps only spaces that actually have
@@ -920,11 +1018,15 @@ func (e *Engine) Spaces(ctx context.Context, q Query) (SpaceList, error) {
 	if err != nil {
 		return SpaceList{}, err
 	}
+	names := e.spaceNames(ctx, spaces)
 	out := SpaceList{Spaces: make([]SpaceInfo, 0, len(spaces))}
 	for _, sp := range spaces {
 		name := sp.DisplayName
 		if name == "" {
-			name = shortID(sp.Name) // DMs have no display name and no messages to infer one from
+			name = names[sp.Name]
+		}
+		if name == "" {
+			name = shortID(sp.Name) // nothing to infer a name from; show the ID
 		}
 		out.Spaces = append(out.Spaces, SpaceInfo{
 			ID:        sp.Name,
@@ -934,5 +1036,7 @@ func (e *Engine) Spaces(ctx context.Context, q Query) (SpaceList, error) {
 			Link:      spaceLink(sp.Name, sp.SpaceUri, q.AccountIndex),
 		})
 	}
+	out.Warnings = e.warnings()
+	e.saveNames()
 	return out, nil
 }
