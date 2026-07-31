@@ -90,7 +90,7 @@ type API interface {
 	ListSpaces(ctx context.Context) ([]*chatapi.Space, error)
 	GetSpace(ctx context.Context, name string) (*chatapi.Space, error)
 	FindDirectMessage(ctx context.Context, userRef string) (*chatapi.Space, error)
-	ListMessages(ctx context.Context, parent, filter string, limit int) ([]*chatapi.Message, error)
+	ListMessages(ctx context.Context, parent string, o ListOpts) ([]*chatapi.Message, error)
 	SpaceReadState(ctx context.Context, spaceName string) (string, time.Time, error)
 	ListMembers(ctx context.Context, spaceName string) ([]*chatapi.Membership, error)
 }
@@ -236,17 +236,23 @@ func (e *Engine) Run(ctx context.Context, q Query) (Result, error) {
 	}
 
 	// Scanning every space with no lower bound would drag in all history, so
-	// default to a week. --unread needs no default: each space's lastReadTime
-	// is already a lower bound, and a user-supplied --since still applies as
-	// the later of the two.
+	// default to a week. --unread gets no global default because each space's
+	// own lastReadTime is a better lower bound, however far back it sits; see
+	// spaceWindow, which falls back to the same default per space when a space
+	// has no marker to start from.
 	since := q.Since
 	if q.Space == "" && since.IsZero() && !q.UnreadOnly {
 		since = now.Add(-defaultScanWindow)
 	}
 
+	// A read marker is what makes "unread" meaningful, so --unread drops the
+	// spaces whose marker could not be fetched and reports them, rather than
+	// scanning them with no lower bound and then discarding every message.
 	readAt := map[string]time.Time{}
+	var readErrs []SpaceError
 	if q.UnreadOnly {
-		readAt = e.readStates(ctx, spaces)
+		readAt, readErrs = e.readStates(ctx, spaces)
+		spaces = withReadMarker(spaces, readAt)
 	}
 	var meID string
 	if len(spaces) > 0 {
@@ -261,7 +267,8 @@ func (e *Engine) Run(ctx context.Context, q Query) (Result, error) {
 		}
 	}
 
-	scans, spaceErrs := e.scanSpaces(ctx, spaces, q, since, readAt, meID)
+	scans, spaceErrs := e.scanSpaces(ctx, spaces, q, since, now, readAt, meID)
+	spaceErrs = append(readErrs, spaceErrs...)
 	scans = applyLimit(scans, q.Limit)
 	groups := e.group(ctx, scans, q, since, meID)
 	groups = applyThreadLimit(groups, q.ThreadLimit)
@@ -308,30 +315,53 @@ func (e *Engine) selectSpaces(ctx context.Context, q Query) ([]*chatapi.Space, e
 	return out, nil
 }
 
-// readStates fetches every space's read marker in parallel. A space whose read
-// state cannot be fetched is simply treated as never read.
-func (e *Engine) readStates(ctx context.Context, spaces []*chatapi.Space) map[string]time.Time {
+// readStates fetches every space's read marker in parallel. Presence in the
+// returned map is the signal that a marker was fetched at all: a space that is
+// present with a zero time has simply never been read, which is a different
+// thing from a space whose read state could not be fetched — that one comes
+// back as a SpaceError instead.
+func (e *Engine) readStates(ctx context.Context, spaces []*chatapi.Space) (map[string]time.Time, []SpaceError) {
 	out := make(map[string]time.Time, len(spaces))
+	errs := make([]*SpaceError, len(spaces))
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, maxConcurrentSpaces)
-	for _, sp := range spaces {
+	for i, sp := range spaces {
 		wg.Add(1)
-		go func(sp *chatapi.Space) {
+		go func(i int, sp *chatapi.Space) {
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
 			name, ts, err := e.api.SpaceReadState(ctx, sp.Name)
 			if err != nil {
+				errs[i] = &SpaceError{SpaceID: sp.Name, SpaceName: sp.DisplayName, Err: err}
 				return
 			}
 			e.rememberMe(name)
 			mu.Lock()
 			out[sp.Name] = ts
 			mu.Unlock()
-		}(sp)
+		}(i, sp)
 	}
 	wg.Wait()
+
+	var failed []SpaceError
+	for _, se := range errs {
+		if se != nil {
+			failed = append(failed, *se)
+		}
+	}
+	return out, failed
+}
+
+// withReadMarker keeps only the spaces whose read marker was fetched.
+func withReadMarker(spaces []*chatapi.Space, readAt map[string]time.Time) []*chatapi.Space {
+	out := make([]*chatapi.Space, 0, len(spaces))
+	for _, sp := range spaces {
+		if _, ok := readAt[sp.Name]; ok {
+			out = append(out, sp)
+		}
+	}
 	return out
 }
 
@@ -389,7 +419,7 @@ type spaceScan struct {
 // maxConcurrentSpaces. Each space gets its own filter, because --unread folds
 // that space's own lastReadTime into the lower bound.
 func (e *Engine) scanSpaces(ctx context.Context, spaces []*chatapi.Space, q Query,
-	since time.Time, readAt map[string]time.Time, meID string) ([]spaceScan, []SpaceError) {
+	since, now time.Time, readAt map[string]time.Time, meID string) ([]spaceScan, []SpaceError) {
 
 	scans := make([]spaceScan, len(spaces))
 	failed := make([]*SpaceError, len(spaces))
@@ -406,20 +436,20 @@ func (e *Engine) scanSpaces(ctx context.Context, spaces []*chatapi.Space, q Quer
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			lastRead := readAt[sp.Name]
-			spaceSince := since
-			if q.UnreadOnly && lastRead.After(spaceSince) {
-				spaceSince = lastRead
-			}
-			filter := buildMessageFilter(spaceSince, q.Until, q.Thread)
-			raw, err := e.api.ListMessages(ctx, sp.Name, filter, q.Limit)
+			lastRead, known := readAt[sp.Name]
+			spaceSince := spaceWindow(q, since, now, lastRead)
+			raw, err := e.api.ListMessages(ctx, sp.Name, ListOpts{
+				Filter: buildMessageFilter(spaceSince, q.Until, q.Thread),
+				Keep:   q.keepFunc(lastRead, known, meID),
+				Limit:  q.Limit,
+			})
 			if err != nil {
 				failed[i] = &SpaceError{SpaceID: sp.Name, SpaceName: sp.DisplayName, Err: err}
 			} else {
 				scans[i] = spaceScan{
 					space:    sp,
 					lastRead: lastRead,
-					msgs:     convert(sp, raw, lastRead, meID, q),
+					msgs:     convert(raw, lastRead, known, meID, q),
 				}
 			}
 			if q.Progress != nil {
@@ -447,58 +477,104 @@ func (e *Engine) scanSpaces(ctx context.Context, spaces []*chatapi.Space, q Quer
 	return out, errs
 }
 
+// spaceWindow is one space's lower time bound. --unread starts from that
+// space's own read marker; a space that has never been read has no marker to
+// start from, so it falls back to the default window rather than all history.
+func spaceWindow(q Query, since, now, lastRead time.Time) time.Time {
+	if !q.UnreadOnly {
+		return since
+	}
+	switch {
+	case lastRead.After(since):
+		return lastRead
+	case lastRead.IsZero() && since.IsZero():
+		return now.Add(-defaultScanWindow)
+	}
+	return since
+}
+
+// keepFunc is the client-side filter handed down to the API layer so that a
+// --limit is spent on messages the user asked for. It returns nil when there is
+// nothing to filter, which lets the API layer page as cheaply as it can.
+func (q Query) keepFunc(lastRead time.Time, readKnown bool, meID string) func(*chatapi.Message) bool {
+	if !q.MentionsMe && !q.UnreadOnly {
+		return nil
+	}
+	return func(m *chatapi.Message) bool {
+		mi, ok := messageInfo(m, lastRead, readKnown, meID)
+		return ok && q.wants(mi)
+	}
+}
+
+// wants reports whether a message passes the filters the API cannot express
+// server-side. It must agree with keepFunc, so both go through it.
+func (q Query) wants(mi MessageInfo) bool {
+	if q.MentionsMe && !mi.MentionsMe {
+		return false
+	}
+	if q.UnreadOnly && !mi.Unread {
+		return false
+	}
+	return true
+}
+
 // convert turns API messages into output shapes and applies the client-side
 // filters the API cannot express.
-func convert(sp *chatapi.Space, raw []*chatapi.Message, lastRead time.Time, meID string, q Query) []MessageInfo {
+func convert(raw []*chatapi.Message, lastRead time.Time, readKnown bool, meID string, q Query) []MessageInfo {
 	out := make([]MessageInfo, 0, len(raw))
 	for _, m := range raw {
-		ts, err := time.Parse(time.RFC3339Nano, m.CreateTime)
-		if err != nil {
-			continue // a message we cannot place in time cannot be sorted or filtered
-		}
-		head, _ := isThreadHead(m.Name)
-		mi := MessageInfo{
-			ID:           m.Name,
-			ThreadID:     threadIDOf(m),
-			IsThreadHead: head,
-			CreateTime:   ts.Local(),
-			Text:         m.Text,
-			Mentions:     []string{},
-			Link:         messageLink(m.Name),
-		}
-		if m.Sender != nil {
-			mi.Sender = Sender{
-				ID:   m.Sender.Name,
-				Name: m.Sender.DisplayName,
-				Type: m.Sender.Type,
-				IsMe: meID != "" && m.Sender.Name == meID,
-			}
-			if mi.Sender.Name == "" {
-				mi.Sender.Name = m.Sender.Name // fall back to the raw users/… ID
-			}
-		}
-		for _, a := range m.Annotations {
-			if a == nil || a.Type != "USER_MENTION" || a.UserMention == nil || a.UserMention.User == nil {
-				continue
-			}
-			mi.Mentions = append(mi.Mentions, a.UserMention.User.Name)
-			if meID != "" && a.UserMention.User.Name == meID {
-				mi.MentionsMe = true
-			}
-		}
-		// Unread deliberately excludes your own messages: comparing times alone
-		// would mark everything you just sent as unread.
-		mi.Unread = !lastRead.IsZero() && mi.CreateTime.After(lastRead) && !mi.Sender.IsMe
-
-		if q.MentionsMe && !mi.MentionsMe {
-			continue
-		}
-		if q.UnreadOnly && !mi.Unread {
+		mi, ok := messageInfo(m, lastRead, readKnown, meID)
+		if !ok || !q.wants(mi) {
 			continue
 		}
 		out = append(out, mi)
 	}
 	return out
+}
+
+// messageInfo converts one API message. ok is false for a message that cannot
+// be placed in time, which makes it impossible to sort or filter.
+func messageInfo(m *chatapi.Message, lastRead time.Time, readKnown bool, meID string) (MessageInfo, bool) {
+	ts, err := time.Parse(time.RFC3339Nano, m.CreateTime)
+	if err != nil {
+		return MessageInfo{}, false
+	}
+	head, _ := isThreadHead(m.Name)
+	mi := MessageInfo{
+		ID:           m.Name,
+		ThreadID:     threadIDOf(m),
+		IsThreadHead: head,
+		CreateTime:   ts.Local(),
+		Text:         m.Text,
+		Mentions:     []string{},
+		Link:         messageLink(m.Name),
+	}
+	if m.Sender != nil {
+		mi.Sender = Sender{
+			ID:   m.Sender.Name,
+			Name: m.Sender.DisplayName,
+			Type: m.Sender.Type,
+			IsMe: meID != "" && m.Sender.Name == meID,
+		}
+		if mi.Sender.Name == "" {
+			mi.Sender.Name = m.Sender.Name // fall back to the raw users/… ID
+		}
+	}
+	for _, a := range m.Annotations {
+		if a == nil || a.Type != "USER_MENTION" || a.UserMention == nil || a.UserMention.User == nil {
+			continue
+		}
+		mi.Mentions = append(mi.Mentions, a.UserMention.User.Name)
+		if meID != "" && a.UserMention.User.Name == meID {
+			mi.MentionsMe = true
+		}
+	}
+	// A zero lastRead that was actually fetched means the space has never been
+	// opened, so everything in it is unread. Unread deliberately excludes your
+	// own messages: comparing times alone would mark everything you just sent
+	// as unread.
+	mi.Unread = readKnown && mi.CreateTime.After(lastRead) && !mi.Sender.IsMe
+	return mi, true
 }
 
 // threadIDOf prefers the API's thread name, derives it from the message name

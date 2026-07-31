@@ -100,7 +100,7 @@ type fakeAPI struct {
 	spaces     []*chatapi.Space
 	getSpace   func(name string) (*chatapi.Space, error)
 	findDM     func(userRef string) (*chatapi.Space, error)
-	messages   func(parent, filter string, limit int) ([]*chatapi.Message, error)
+	messages   func(parent string, o ListOpts) ([]*chatapi.Message, error)
 	readState  func(spaceName string) (string, time.Time, error)
 	members    func(spaceName string) ([]*chatapi.Membership, error)
 	listErr    error
@@ -127,12 +127,30 @@ func (f *fakeAPI) FindDirectMessage(_ context.Context, userRef string) (*chatapi
 	return f.findDM(userRef)
 }
 
-func (f *fakeAPI) ListMessages(_ context.Context, parent, filter string, limit int) ([]*chatapi.Message, error) {
-	f.msgFilters.Store(parent, filter)
+// ListMessages enforces the same contract as *Client, so the engine is never
+// tested against a fake that is more generous than the real API: hooks return
+// a space's messages oldest-first, and this applies Keep and then Limit to the
+// NEWEST end, exactly as a `createTime DESC` request truncated at Limit does.
+func (f *fakeAPI) ListMessages(_ context.Context, parent string, o ListOpts) ([]*chatapi.Message, error) {
+	f.msgFilters.Store(parent, o.Filter)
 	if f.messages == nil {
 		f.t.Fatalf("unexpected ListMessages(%q)", parent)
 	}
-	return f.messages(parent, filter, limit)
+	all, err := f.messages(parent, o)
+	if err != nil {
+		return nil, err
+	}
+	kept := make([]*chatapi.Message, 0, len(all))
+	for _, m := range all {
+		if o.Keep == nil || o.Keep(m) {
+			kept = append(kept, m)
+		}
+	}
+	sort.SliceStable(kept, func(a, b int) bool { return kept[a].CreateTime < kept[b].CreateTime })
+	if o.Limit > 0 && len(kept) > o.Limit {
+		kept = kept[len(kept)-o.Limit:]
+	}
+	return kept, nil
 }
 
 // SpaceReadState answers with a canonical name by default: every Run resolves
@@ -328,7 +346,7 @@ func TestRunFansOutAndOrdersSpacesByRecency(t *testing.T) {
 			{Name: "spaces/A", DisplayName: "Alpha", SpaceType: "SPACE", SpaceThreadingState: "THREADED_MESSAGES"},
 			{Name: "spaces/B", DisplayName: "Beta", SpaceType: "SPACE", SpaceThreadingState: "THREADED_MESSAGES"},
 		},
-		messages: func(parent, _ string, _ int) ([]*chatapi.Message, error) {
+		messages: func(parent string, _ ListOpts) ([]*chatapi.Message, error) {
 			switch parent {
 			case "spaces/A":
 				return []*chatapi.Message{
@@ -364,8 +382,8 @@ func TestRunAppliesDefaultWindowWhenScanningEverySpace(t *testing.T) {
 	api := &fakeAPI{
 		t:      t,
 		spaces: []*chatapi.Space{{Name: "spaces/A", DisplayName: "Alpha"}},
-		messages: func(_, filter string, _ int) ([]*chatapi.Message, error) {
-			gotFilter = filter
+		messages: func(_ string, o ListOpts) ([]*chatapi.Message, error) {
+			gotFilter = o.Filter
 			return nil, nil
 		},
 	}
@@ -384,8 +402,8 @@ func TestRunSkipsDefaultWindowForSingleSpaceAndForUnread(t *testing.T) {
 	single := &fakeAPI{
 		t:        t,
 		getSpace: func(name string) (*chatapi.Space, error) { return &chatapi.Space{Name: name}, nil },
-		messages: func(_, filter string, _ int) ([]*chatapi.Message, error) {
-			singleFilter = filter
+		messages: func(_ string, o ListOpts) ([]*chatapi.Message, error) {
+			singleFilter = o.Filter
 			return nil, nil
 		},
 	}
@@ -401,8 +419,8 @@ func TestRunSkipsDefaultWindowForSingleSpaceAndForUnread(t *testing.T) {
 		t:         t,
 		spaces:    []*chatapi.Space{{Name: "spaces/A"}},
 		readState: readStateFor(map[string]string{"spaces/A": "2026-07-01T00:00:00Z"}),
-		messages: func(_, filter string, _ int) ([]*chatapi.Message, error) {
-			unreadFilter = filter
+		messages: func(_ string, o ListOpts) ([]*chatapi.Message, error) {
+			unreadFilter = o.Filter
 			return nil, nil
 		},
 	}
@@ -425,7 +443,7 @@ func TestRunUsesPerSpaceReadMarkers(t *testing.T) {
 			"spaces/A": "2026-07-20T00:00:00Z",
 			"spaces/B": "2026-07-24T00:00:00Z",
 		}),
-		messages: func(string, string, int) ([]*chatapi.Message, error) { return nil, nil },
+		messages: func(string, ListOpts) ([]*chatapi.Message, error) { return nil, nil },
 	}
 	if _, err := NewEngine(api).Run(context.Background(), Query{UnreadOnly: true, Now: fixedTime(t, "2026-07-26T00:00:00Z")}); err != nil {
 		t.Fatal(err)
@@ -442,7 +460,7 @@ func TestUnreadExcludesYourOwnMessages(t *testing.T) {
 		t:         t,
 		spaces:    []*chatapi.Space{{Name: "spaces/A", DisplayName: "Alpha"}},
 		readState: readStateFor(map[string]string{"spaces/A": "2026-07-25T00:00:00Z"}),
-		messages: func(string, string, int) ([]*chatapi.Message, error) {
+		messages: func(string, ListOpts) ([]*chatapi.Message, error) {
 			return []*chatapi.Message{
 				rawMsg("spaces/A/messages/t1.t1", "spaces/A/threads/t1", "users/1", "Linh", "theirs", "2026-07-25T09:00:00Z"),
 				rawMsg("spaces/A/messages/t1.t2", "spaces/A/threads/t1", meUser, "Ben", "mine", "2026-07-25T09:05:00Z"),
@@ -470,7 +488,7 @@ func TestMentionsMeFiltersClientSide(t *testing.T) {
 		t:         t,
 		spaces:    []*chatapi.Space{{Name: "spaces/A", DisplayName: "Alpha"}},
 		readState: readStateFor(nil),
-		messages: func(string, string, int) ([]*chatapi.Message, error) {
+		messages: func(string, ListOpts) ([]*chatapi.Message, error) {
 			return []*chatapi.Message{
 				rawMsg("spaces/A/messages/t1.t1", "spaces/A/threads/t1", "users/1", "Linh", "hi all", "2026-07-25T09:00:00Z"),
 				rawMsg("spaces/A/messages/t1.t2", "spaces/A/threads/t1", "users/1", "Linh", "hi ben", "2026-07-25T09:01:00Z", meUser),
@@ -495,7 +513,7 @@ func TestThreadIsPartialWhenItsHeadIsOutsideTheWindow(t *testing.T) {
 	api := &fakeAPI{
 		t:      t,
 		spaces: []*chatapi.Space{{Name: "spaces/A", DisplayName: "Alpha"}},
-		messages: func(string, string, int) ([]*chatapi.Message, error) {
+		messages: func(string, ListOpts) ([]*chatapi.Message, error) {
 			return []*chatapi.Message{
 				// t1 includes its head (mid == tid); t2 does not.
 				rawMsg("spaces/A/messages/t1.t1", "spaces/A/threads/t1", "users/1", "Linh", "start", "2026-07-25T09:00:00Z"),
@@ -526,7 +544,7 @@ func TestLimitCutsNewestFirstAcrossAllSpaces(t *testing.T) {
 			{Name: "spaces/A", DisplayName: "Alpha"},
 			{Name: "spaces/B", DisplayName: "Beta"},
 		},
-		messages: func(parent, _ string, _ int) ([]*chatapi.Message, error) {
+		messages: func(parent string, _ ListOpts) ([]*chatapi.Message, error) {
 			switch parent {
 			case "spaces/A":
 				return []*chatapi.Message{
@@ -565,7 +583,7 @@ func TestThreadLimitCutsThreadsNotMessages(t *testing.T) {
 	api := &fakeAPI{
 		t:      t,
 		spaces: []*chatapi.Space{{Name: "spaces/A", DisplayName: "Alpha"}},
-		messages: func(string, string, int) ([]*chatapi.Message, error) {
+		messages: func(string, ListOpts) ([]*chatapi.Message, error) {
 			return []*chatapi.Message{
 				rawMsg("spaces/A/messages/t1.t1", "spaces/A/threads/t1", "users/1", "Linh", "old-1", "2026-07-20T00:00:00Z"),
 				rawMsg("spaces/A/messages/t1.t2", "spaces/A/threads/t1", "users/1", "Linh", "old-2", "2026-07-20T00:01:00Z"),
@@ -592,7 +610,7 @@ func TestOneFailingSpaceDoesNotKillTheCommand(t *testing.T) {
 			{Name: "spaces/BAD", DisplayName: "Broken"},
 			{Name: "spaces/OK", DisplayName: "Fine"},
 		},
-		messages: func(parent, _ string, _ int) ([]*chatapi.Message, error) {
+		messages: func(parent string, _ ListOpts) ([]*chatapi.Message, error) {
 			if parent == "spaces/BAD" {
 				return nil, errors.New("403 forbidden")
 			}
@@ -620,7 +638,7 @@ func TestDMNameComesFromTheOtherParticipant(t *testing.T) {
 			{Name: "spaces/DM1", SpaceType: "DIRECT_MESSAGE", SpaceThreadingState: "UNTHREADED_MESSAGES"},
 		},
 		readState: readStateFor(nil),
-		messages: func(string, string, int) ([]*chatapi.Message, error) {
+		messages: func(string, ListOpts) ([]*chatapi.Message, error) {
 			return []*chatapi.Message{
 				rawMsg("spaces/DM1/messages/t1.t1", "spaces/DM1/threads/t1", meUser, "Ben", "mine", "2026-07-25T09:00:00Z"),
 				rawMsg("spaces/DM1/messages/t2.t2", "spaces/DM1/threads/t2", "users/1", "Linh Tran", "theirs", "2026-07-25T09:01:00Z"),
@@ -643,7 +661,7 @@ func TestDMNameFallsBackToMembersWhenOnlyOwnMessagesAreInWindow(t *testing.T) {
 			{Name: "spaces/DM1", SpaceType: "DIRECT_MESSAGE"},
 		},
 		readState: readStateFor(nil),
-		messages: func(string, string, int) ([]*chatapi.Message, error) {
+		messages: func(string, ListOpts) ([]*chatapi.Message, error) {
 			return []*chatapi.Message{
 				rawMsg("spaces/DM1/messages/t1.t1", "spaces/DM1/threads/t1", meUser, "Ben", "mine", "2026-07-25T09:00:00Z"),
 			}, nil
@@ -672,7 +690,7 @@ func TestSpaceTypeFilterLimitsTheScan(t *testing.T) {
 			{Name: "spaces/A", DisplayName: "Alpha", SpaceType: "SPACE"},
 			{Name: "spaces/DM1", SpaceType: "DIRECT_MESSAGE"},
 		},
-		messages: func(parent string, _ string, _ int) ([]*chatapi.Message, error) {
+		messages: func(parent string, _ ListOpts) ([]*chatapi.Message, error) {
 			if parent != "spaces/A" {
 				t.Errorf("scanned %q despite --type space", parent)
 			}
@@ -685,5 +703,124 @@ func TestSpaceTypeFilterLimitsTheScan(t *testing.T) {
 	}
 	if res.Summary.Spaces != 1 {
 		t.Fatalf("summary.Spaces = %d, want 1", res.Summary.Spaces)
+	}
+}
+
+// A limit is a limit on messages the user asked for. Spending it on messages
+// that the client-side filter then discards makes `chat mentions --limit 50`
+// return nothing whenever the 50 newest messages happen not to mention you.
+func TestMentionsSurviveTheMessageLimit(t *testing.T) {
+	api := &fakeAPI{
+		t:      t,
+		spaces: []*chatapi.Space{{Name: "spaces/A", DisplayName: "Alpha"}},
+		messages: func(string, ListOpts) ([]*chatapi.Message, error) {
+			return []*chatapi.Message{
+				rawMsg("spaces/A/messages/t1.t1", "spaces/A/threads/t1", "users/1", "Linh", "hi ben", "2026-07-25T09:00:00Z", meUser),
+				rawMsg("spaces/A/messages/t1.t2", "spaces/A/threads/t1", "users/1", "Linh", "chatter", "2026-07-25T09:01:00Z"),
+				rawMsg("spaces/A/messages/t1.t3", "spaces/A/threads/t1", "users/1", "Linh", "chatter", "2026-07-25T09:02:00Z"),
+				rawMsg("spaces/A/messages/t1.t4", "spaces/A/threads/t1", "users/1", "Linh", "chatter", "2026-07-25T09:03:00Z"),
+			}, nil
+		},
+	}
+	res, err := NewEngine(api).Run(context.Background(), Query{
+		MentionsMe: true, Limit: 2, Now: fixedTime(t, "2026-07-26T00:00:00Z"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Summary.Messages != 1 {
+		t.Fatalf("the limit must be spent on mentions, not on messages that are filtered away: %+v", res.Summary)
+	}
+	if got := res.Spaces[0].Threads[0].Messages[0].Text; got != "hi ben" {
+		t.Fatalf("message = %q, want %q", got, "hi ben")
+	}
+}
+
+func TestUnreadSurvivesTheMessageLimit(t *testing.T) {
+	api := &fakeAPI{
+		t:         t,
+		spaces:    []*chatapi.Space{{Name: "spaces/A", DisplayName: "Alpha"}},
+		readState: readStateFor(map[string]string{"spaces/A": "2026-07-25T09:00:30Z"}),
+		messages: func(string, ListOpts) ([]*chatapi.Message, error) {
+			return []*chatapi.Message{
+				rawMsg("spaces/A/messages/t1.t1", "spaces/A/threads/t1", "users/1", "Linh", "unread one", "2026-07-25T09:01:00Z"),
+				rawMsg("spaces/A/messages/t1.t2", "spaces/A/threads/t1", meUser, "Ben", "mine", "2026-07-25T09:02:00Z"),
+				rawMsg("spaces/A/messages/t1.t3", "spaces/A/threads/t1", meUser, "Ben", "mine", "2026-07-25T09:03:00Z"),
+			}, nil
+		},
+	}
+	res, err := NewEngine(api).Run(context.Background(), Query{
+		UnreadOnly: true, Limit: 2, Now: fixedTime(t, "2026-07-26T00:00:00Z"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Summary.Messages != 1 {
+		t.Fatalf("your own newer messages must not eat the --limit budget: %+v", res.Summary)
+	}
+}
+
+// A space with a read marker of zero has never been opened, so everything in it
+// is unread. The scan still needs a lower bound, or it drags in all history.
+func TestUnreadTreatsNeverReadSpaceAsFullyUnreadWithinDefaultWindow(t *testing.T) {
+	var gotFilter string
+	api := &fakeAPI{
+		t:         t,
+		spaces:    []*chatapi.Space{{Name: "spaces/A", DisplayName: "Alpha"}},
+		readState: readStateFor(nil), // never read: zero time, no error
+		messages: func(_ string, o ListOpts) ([]*chatapi.Message, error) {
+			gotFilter = o.Filter
+			return []*chatapi.Message{
+				rawMsg("spaces/A/messages/t1.t1", "spaces/A/threads/t1", "users/1", "Linh", "hello", "2026-07-25T09:00:00Z"),
+			}, nil
+		},
+	}
+	res, err := NewEngine(api).Run(context.Background(), Query{
+		UnreadOnly: true, Now: fixedTime(t, "2026-07-26T00:00:00Z"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := `create_time > "2026-07-19T00:00:00Z"`; gotFilter != want {
+		t.Fatalf("a space with no read marker must still be bounded: filter = %q, want %q", gotFilter, want)
+	}
+	if res.Summary.Unread != 1 {
+		t.Fatalf("a never-read space has no read messages in it: %+v", res.Summary)
+	}
+}
+
+// Without a read marker there is no way to tell read from unread, so a failed
+// read-state lookup has to be reported rather than silently scanned for nothing.
+func TestUnreadReportsSpacesWhoseReadStateFailed(t *testing.T) {
+	api := &fakeAPI{
+		t: t,
+		spaces: []*chatapi.Space{
+			{Name: "spaces/A", DisplayName: "Alpha"},
+			{Name: "spaces/B", DisplayName: "Beta"},
+		},
+		readState: func(spaceName string) (string, time.Time, error) {
+			if spaceName == "spaces/B" {
+				return "", time.Time{}, errors.New("readstate boom")
+			}
+			return readStateFor(map[string]string{"spaces/A": "2026-07-20T00:00:00Z"})(spaceName)
+		},
+		messages: func(parent string, _ ListOpts) ([]*chatapi.Message, error) {
+			if parent == "spaces/B" {
+				t.Error("a space with no usable read marker must not be scanned")
+			}
+			return nil, nil
+		},
+	}
+	res, err := NewEngine(api).Run(context.Background(), Query{
+		UnreadOnly: true, Now: fixedTime(t, "2026-07-26T00:00:00Z"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Errors) != 1 || res.Errors[0].SpaceID != "spaces/B" {
+		t.Fatalf("expected one reported failure for spaces/B, got %+v", res.Errors)
+	}
+	if !strings.Contains(res.Errors[0].Err.Error(), "readstate boom") {
+		t.Fatalf("the underlying error must survive: %v", res.Errors[0].Err)
 	}
 }
