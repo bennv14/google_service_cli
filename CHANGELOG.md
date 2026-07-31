@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v2.0.3] - 2026-07-31
+
 ### Added
 
 - `gsvc chat` now shows people's names instead of raw `users/1234…` IDs, in
@@ -25,6 +27,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   must run `gsvc auth login` again**, and enable the *People API* in the GCP
   project behind their OAuth client. Until both are done, `chat` works exactly
   as before and prints one warning line to stderr.
+
+### Fixed
+
+- Cancelling a `chat` command (Ctrl-C, or a `--timeout` expiring) now stops the
+  scan immediately. The `break` on context cancellation escaped only the inner
+  `select`, not the loop, so the remaining spaces and People API batches were
+  still queued before the command gave up.
+- DM space names no longer fall back to a raw `users/1234…` ID when the sender's
+  name could not be resolved; such senders are skipped, as if unnamed.
 
 ### Removed
 
@@ -135,7 +146,8 @@ First release.
 - Global flags: `--profile`, `--output`/`-o`, `--verbose`.
 - Build-time version injection surfaced by `gsvc version`.
 
-[Unreleased]: https://github.com/bennv14/google_service_cli/compare/v2.0.2...HEAD
+[Unreleased]: https://github.com/bennv14/google_service_cli/compare/v2.0.3...HEAD
+[v2.0.3]: https://github.com/bennv14/google_service_cli/compare/v2.0.2...v2.0.3
 [v2.0.2]: https://github.com/bennv14/google_service_cli/compare/v2.0.1...v2.0.2
 [v2.0.1]: https://github.com/bennv14/google_service_cli/compare/v2.0.0...v2.0.1
 [v2.0.0]: https://github.com/bennv14/google_service_cli/compare/v1.0.0...v2.0.0
