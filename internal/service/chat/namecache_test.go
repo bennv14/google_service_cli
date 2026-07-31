@@ -237,3 +237,53 @@ func TestCachedDirectorySatisfiesBothInterfaces(t *testing.T) {
 	var _ Directory = (*cachedDirectory)(nil)
 	var _ nameCache = (*cachedDirectory)(nil)
 }
+
+func TestExpiredEntriesPrunedOnLoadAndFlush(t *testing.T) {
+	inner := &countingDirectory{people: map[string]Person{"users/1": {Name: "Linh Tran"}}}
+	now := time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC)
+	c := newTestCache(t, inner, now, false)
+
+	c.Remember("users/old", Person{Name: "Old User"})
+	c.Flush()
+
+	// Re-open cache 31 days later and add a new entry
+	later := newCachedDirectory(inner, c.path, false)
+	later.now = func() time.Time { return now.Add(nameCacheTTL + 24*time.Hour) }
+	later.Remember("users/new", Person{Name: "New User"})
+	later.Flush()
+
+	b, err := os.ReadFile(c.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var entries map[string]cacheEntry
+	if err := json.Unmarshal(b, &entries); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := entries["users/old"]; ok {
+		t.Fatalf("expired entry 'users/old' was not pruned from disk cache: %+v", entries)
+	}
+	if entries["users/new"].Name != "New User" {
+		t.Fatalf("new entry 'users/new' missing or incorrect: %+v", entries)
+	}
+}
+
+func TestLookupDeduplicatesMissingIDs(t *testing.T) {
+	inner := &countingDirectory{people: map[string]Person{
+		"users/1": {Name: "Linh Tran"},
+	}}
+	now := time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC)
+	c := newTestCache(t, inner, now, false)
+
+	got, err := c.Lookup(context.Background(), []string{"users/1", "users/1", "users/1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got["users/1"].Name != "Linh Tran" {
+		t.Fatalf("got %+v", got)
+	}
+	if len(inner.asked) != 1 {
+		t.Fatalf("inner was asked for %v, want exactly 1 deduplicated ID", inner.asked)
+	}
+}
+

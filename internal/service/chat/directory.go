@@ -87,9 +87,9 @@ func (d *peopleDirectory) Lookup(ctx context.Context, ids []string) (map[string]
 	for start := 0; start < len(ids); start += peopleBatchSize {
 		end := min(start+peopleBatchSize, len(ids))
 		wg.Add(1)
+		sem <- struct{}{}
 		go func(batch []string) {
 			defer wg.Done()
-			sem <- struct{}{}
 			defer func() { <-sem }()
 
 			people, err := d.batch(ctx, batch)
@@ -127,7 +127,7 @@ func (d *peopleDirectory) batch(ctx context.Context, ids []string) (map[string]P
 	}
 	out := make(map[string]Person, len(res.Responses))
 	for _, r := range res.Responses {
-		if r == nil || r.Person == nil {
+		if r == nil || r.Person == nil || r.RequestedResourceName == "" {
 			continue
 		}
 		name := displayName(r.Person)
