@@ -92,7 +92,6 @@ type API interface {
 	FindDirectMessage(ctx context.Context, userRef string) (*chatapi.Space, error)
 	ListMessages(ctx context.Context, parent string, o ListOpts) ([]*chatapi.Message, error)
 	SpaceReadState(ctx context.Context, spaceName string) (string, time.Time, error)
-	ListMembers(ctx context.Context, spaceName string) ([]*chatapi.Membership, error)
 }
 
 var _ API = (*Client)(nil)
@@ -270,7 +269,7 @@ func (e *Engine) Run(ctx context.Context, q Query) (Result, error) {
 	scans, spaceErrs := e.scanSpaces(ctx, spaces, q, since, now, readAt, meID)
 	spaceErrs = append(readErrs, spaceErrs...)
 	scans = applyLimit(scans, q.Limit)
-	groups := e.group(ctx, scans, q, since, meID)
+	groups := group(scans, q, since)
 	groups = applyThreadLimit(groups, q.ThreadLimit)
 	recount(groups)
 
@@ -632,14 +631,14 @@ func applyLimit(scans []spaceScan, limit int) []spaceScan {
 }
 
 // group builds the space → thread → message tree, newest activity first.
-func (e *Engine) group(ctx context.Context, scans []spaceScan, q Query, since time.Time, meID string) []SpaceGroup {
+func group(scans []spaceScan, q Query, since time.Time) []SpaceGroup {
 	var out []SpaceGroup
 	for _, sc := range scans {
 		if len(sc.msgs) == 0 {
 			continue
 		}
 		out = append(out, SpaceGroup{
-			Space:   e.spaceInfo(ctx, sc, q, meID),
+			Space:   spaceInfo(sc, q),
 			Threads: groupThreads(sc.msgs, since),
 		})
 	}
@@ -733,10 +732,10 @@ func isPartial(ms []MessageInfo, since time.Time) bool {
 	return ms[0].CreateTime.Sub(since) < partialSlack
 }
 
-func (e *Engine) spaceInfo(ctx context.Context, sc spaceScan, q Query, meID string) SpaceInfo {
+func spaceInfo(sc spaceScan, q Query) SpaceInfo {
 	info := SpaceInfo{
 		ID:        sc.space.Name,
-		Name:      e.spaceName(ctx, sc, meID),
+		Name:      spaceName(sc),
 		Type:      sc.space.SpaceType,
 		Threading: sc.space.SpaceThreadingState,
 		Link:      spaceLink(sc.space.Name, sc.space.SpaceUri, q.AccountIndex),
@@ -748,27 +747,17 @@ func (e *Engine) spaceInfo(ctx context.Context, sc spaceScan, q Query, meID stri
 	return info
 }
 
-// spaceName names a space. DMs have an empty displayName, so the other party is
-// inferred from the messages already in hand; only a window containing nothing
-// but our own messages costs an extra members.list call.
-func (e *Engine) spaceName(ctx context.Context, sc spaceScan, meID string) string {
+// spaceName names a space. DMs and group chats have no displayName — the API
+// never returns one — so the other party is inferred from the messages already
+// in hand. There is no second source: spaces.members.list needs a scope gsvc
+// does not request, and returns bare IDs even when it succeeds.
+func spaceName(sc spaceScan) string {
 	if sc.space.DisplayName != "" {
 		return sc.space.DisplayName
 	}
 	for _, m := range sc.msgs {
 		if !m.Sender.IsMe && m.Sender.Name != "" {
 			return m.Sender.Name
-		}
-	}
-	if members, err := e.api.ListMembers(ctx, sc.space.Name); err == nil {
-		for _, mem := range members {
-			if mem.Member == nil || mem.Member.Name == meID {
-				continue
-			}
-			if mem.Member.DisplayName != "" {
-				return mem.Member.DisplayName
-			}
-			return mem.Member.Name
 		}
 	}
 	return shortID(sc.space.Name)

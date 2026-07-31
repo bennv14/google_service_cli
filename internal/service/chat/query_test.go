@@ -102,7 +102,6 @@ type fakeAPI struct {
 	findDM     func(userRef string) (*chatapi.Space, error)
 	messages   func(parent string, o ListOpts) ([]*chatapi.Message, error)
 	readState  func(spaceName string) (string, time.Time, error)
-	members    func(spaceName string) ([]*chatapi.Membership, error)
 	listErr    error
 	listCalls  int32
 	msgFilters sync.Map // parent -> filter, for asserting per-space filters
@@ -177,13 +176,6 @@ func readStateFor(times map[string]string) func(string) (string, time.Time, erro
 		ts, err := time.Parse(time.RFC3339, s)
 		return name, ts, err
 	}
-}
-
-func (f *fakeAPI) ListMembers(_ context.Context, spaceName string) ([]*chatapi.Membership, error) {
-	if f.members == nil {
-		f.t.Fatalf("unexpected ListMembers(%q)", spaceName)
-	}
-	return f.members(spaceName)
 }
 
 func TestClientSatisfiesAPI(t *testing.T) {
@@ -651,35 +643,6 @@ func TestDMNameComesFromTheOtherParticipant(t *testing.T) {
 	}
 	if res.Spaces[0].Space.Name != "Linh Tran" {
 		t.Fatalf("DM name = %q, want the other participant", res.Spaces[0].Space.Name)
-	}
-}
-
-func TestDMNameFallsBackToMembersWhenOnlyOwnMessagesAreInWindow(t *testing.T) {
-	api := &fakeAPI{
-		t: t,
-		spaces: []*chatapi.Space{
-			{Name: "spaces/DM1", SpaceType: "DIRECT_MESSAGE"},
-		},
-		readState: readStateFor(nil),
-		messages: func(string, ListOpts) ([]*chatapi.Message, error) {
-			return []*chatapi.Message{
-				rawMsg("spaces/DM1/messages/t1.t1", "spaces/DM1/threads/t1", meUser, "Ben", "mine", "2026-07-25T09:00:00Z"),
-			}, nil
-		},
-		members: func(string) ([]*chatapi.Membership, error) {
-			return []*chatapi.Membership{
-				{Member: &chatapi.User{Name: meUser, DisplayName: "Ben"}},
-				{Member: &chatapi.User{Name: "users/1", DisplayName: "Linh Tran"}},
-			}, nil
-		},
-	}
-	// --unread is what resolves our own ID, which the members fallback needs.
-	res, err := NewEngine(api).Run(context.Background(), Query{MentionsMe: false, UnreadOnly: false, Now: fixedTime(t, "2026-07-26T00:00:00Z")})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.Spaces[0].Space.Name != "Linh Tran" {
-		t.Fatalf("DM name = %q", res.Spaces[0].Space.Name)
 	}
 }
 
