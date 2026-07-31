@@ -302,7 +302,7 @@ func (e *Engine) Run(ctx context.Context, q Query) (Result, error) {
 	spaceErrs = append(readErrs, spaceErrs...)
 	scans = applyLimit(scans, q.Limit)
 	e.resolveNames(ctx, scans)
-	groups := group(scans, q, since)
+	groups := group(scans, q, since, e.dir)
 	groups = applyThreadLimit(groups, q.ThreadLimit)
 	recount(groups)
 	e.saveNames()
@@ -360,11 +360,16 @@ func (e *Engine) readStates(ctx context.Context, spaces []*chatapi.Space) (map[s
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, maxConcurrentSpaces)
+launch:
 	for i, sp := range spaces {
+		select {
+		case sem <- struct{}{}:
+		case <-ctx.Done():
+			break launch
+		}
 		wg.Add(1)
 		go func(i int, sp *chatapi.Space) {
 			defer wg.Done()
-			sem <- struct{}{}
 			defer func() { <-sem }()
 			name, ts, err := e.api.SpaceReadState(ctx, sp.Name)
 			if err != nil {
@@ -464,10 +469,14 @@ func (e *Engine) scanSpaces(ctx context.Context, spaces []*chatapi.Space, q Quer
 	sem := make(chan struct{}, maxConcurrentSpaces)
 
 	for i, sp := range spaces {
+		select {
+		case sem <- struct{}{}:
+		case <-ctx.Done():
+			break
+		}
 		wg.Add(1)
 		go func(i int, sp *chatapi.Space) {
 			defer wg.Done()
-			sem <- struct{}{}
 			defer func() { <-sem }()
 
 			lastRead, known := readAt[sp.Name]
@@ -700,14 +709,14 @@ func applyLimit(scans []spaceScan, limit int) []spaceScan {
 }
 
 // group builds the space → thread → message tree, newest activity first.
-func group(scans []spaceScan, q Query, since time.Time) []SpaceGroup {
+func group(scans []spaceScan, q Query, since time.Time, dir Directory) []SpaceGroup {
 	var out []SpaceGroup
 	for _, sc := range scans {
 		if len(sc.msgs) == 0 {
 			continue
 		}
 		out = append(out, SpaceGroup{
-			Space:   spaceInfo(sc, q),
+			Space:   spaceInfo(sc, q, dir),
 			Threads: groupThreads(sc.msgs, since),
 		})
 	}
@@ -801,10 +810,10 @@ func isPartial(ms []MessageInfo, since time.Time) bool {
 	return ms[0].CreateTime.Sub(since) < partialSlack
 }
 
-func spaceInfo(sc spaceScan, q Query) SpaceInfo {
+func spaceInfo(sc spaceScan, q Query, dir Directory) SpaceInfo {
 	info := SpaceInfo{
 		ID:        sc.space.Name,
-		Name:      spaceName(sc),
+		Name:      spaceName(sc, dir),
 		Type:      sc.space.SpaceType,
 		Threading: sc.space.SpaceThreadingState,
 		Link:      spaceLink(sc.space.Name, sc.space.SpaceUri, q.AccountIndex),
@@ -820,13 +829,18 @@ func spaceInfo(sc spaceScan, q Query) SpaceInfo {
 // never returns one — so the other party is inferred from the messages already
 // in hand. There is no second source: spaces.members.list needs a scope gsvc
 // does not request, and returns bare IDs even when it succeeds.
-func spaceName(sc spaceScan) string {
+func spaceName(sc spaceScan, dir Directory) string {
 	if sc.space.DisplayName != "" {
 		return sc.space.DisplayName
 	}
 	for _, m := range sc.msgs {
 		if !m.Sender.IsMe && m.Sender.Name != "" {
 			return m.Sender.Name
+		}
+	}
+	if c, ok := dir.(nameCache); ok {
+		if p, ok := c.Recall(sc.space.Name); ok && p.Name != "" {
+			return p.Name
 		}
 	}
 	return shortID(sc.space.Name)
@@ -968,10 +982,14 @@ func (e *Engine) probeSenders(ctx context.Context, spaces []*chatapi.Space, meID
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, maxConcurrentSpaces)
 	for _, sp := range spaces {
+		select {
+		case sem <- struct{}{}:
+		case <-ctx.Done():
+			break
+		}
 		wg.Add(1)
 		go func(sp *chatapi.Space) {
 			defer wg.Done()
-			sem <- struct{}{}
 			defer func() { <-sem }()
 
 			msgs, err := e.api.LatestMessages(ctx, sp.Name, spaceProbeMessages)

@@ -993,6 +993,35 @@ func TestSpacesWarnsWhenTheDirectoryFails(t *testing.T) {
 	}
 }
 
+func TestSpaceNameRecallsCachedNameWhenOnlyMeMessagesInScan(t *testing.T) {
+	now := fixedTime(t, "2026-07-26T00:00:00Z")
+	path := filepath.Join(t.TempDir(), "people-test.json")
+	cache := newCachedDirectory(nullDirectory{}, path, false)
+	cache.Remember("spaces/DM1", Person{Name: "Alice Smith"})
+
+	api := &fakeAPI{
+		t:         t,
+		spaces:    []*chatapi.Space{{Name: "spaces/DM1", SpaceType: "DIRECT_MESSAGE"}},
+		readState: readStateFor(map[string]string{"spaces/DM1": "2026-07-25T00:00:00Z"}),
+		messages: func(string, ListOpts) ([]*chatapi.Message, error) {
+			return []*chatapi.Message{
+				rawMsg("spaces/DM1/messages/t1.t1", "spaces/DM1/threads/t1", meUser, "Ben", "I sent a message", "2026-07-25T09:00:00Z"),
+			}, nil
+		},
+	}
+
+	res, err := NewEngine(api, cache).Run(context.Background(), Query{Now: now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Spaces) != 1 {
+		t.Fatalf("res.Spaces count = %d, want 1", len(res.Spaces))
+	}
+	if res.Spaces[0].Space.Name != "Alice Smith" {
+		t.Fatalf("Space.Name = %q, want cached name %q", res.Spaces[0].Space.Name, "Alice Smith")
+	}
+}
+
 // A limit is a limit on messages the user asked for. Spending it on messages
 // that the client-side filter then discards makes `chat mentions --limit 50`
 // return nothing whenever the 50 newest messages happen not to mention you.

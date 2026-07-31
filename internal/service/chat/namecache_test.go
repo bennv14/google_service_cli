@@ -287,3 +287,22 @@ func TestLookupDeduplicatesMissingIDs(t *testing.T) {
 	}
 }
 
+func TestFlushPreservesDirtyOnWriteFailure(t *testing.T) {
+	inner := &countingDirectory{people: map[string]Person{}}
+	now := time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC)
+	c := newTestCache(t, inner, now, false)
+
+	c.path = filepath.Join(t.TempDir(), "not-a-dir", "cache.json")
+	if err := os.WriteFile(filepath.Dir(c.path), []byte("not a directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	c.Remember("users/1", Person{Name: "Linh"})
+	if !c.dirty {
+		t.Fatal("expected dirty = true after Remember")
+	}
+	c.Flush()
+	if !c.dirty {
+		t.Fatal("expected dirty to remain true when Flush fails to write to disk")
+	}
+}

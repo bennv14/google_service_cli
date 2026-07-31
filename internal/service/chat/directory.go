@@ -86,8 +86,17 @@ func (d *peopleDirectory) Lookup(ctx context.Context, ids []string) (map[string]
 
 	for start := 0; start < len(ids); start += peopleBatchSize {
 		end := min(start+peopleBatchSize, len(ids))
+		select {
+		case sem <- struct{}{}:
+		case <-ctx.Done():
+			mu.Lock()
+			if firstErr == nil {
+				firstErr = ctx.Err()
+			}
+			mu.Unlock()
+			break
+		}
 		wg.Add(1)
-		sem <- struct{}{}
 		go func(batch []string) {
 			defer wg.Done()
 			defer func() { <-sem }()

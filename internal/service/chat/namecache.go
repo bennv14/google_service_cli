@@ -148,8 +148,6 @@ func (c *cachedDirectory) Flush() {
 	if !c.dirty {
 		return
 	}
-	c.dirty = false
-
 	now := c.now()
 	clean := make(map[string]cacheEntry, len(c.entries))
 	for id, e := range c.entries {
@@ -178,5 +176,7 @@ func (c *cachedDirectory) Flush() {
 	if err := tmp.Close(); err != nil {
 		return
 	}
-	_ = os.Rename(tmp.Name(), c.path)
+	if err := os.Rename(tmp.Name(), c.path); err == nil {
+		c.dirty = false
+	}
 }
