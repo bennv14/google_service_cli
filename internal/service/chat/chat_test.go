@@ -309,7 +309,7 @@ func TestSpaceReadStateRejectsMalformedTime(t *testing.T) {
 	}
 }
 
-func TestFindDirectMessageAndGetSpaceAndMembers(t *testing.T) {
+func TestFindDirectMessageAndGetSpace(t *testing.T) {
 	var dmName string
 	cl := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -321,12 +321,6 @@ func TestFindDirectMessageAndGetSpaceAndMembers(t *testing.T) {
 		case "/v1/spaces/A":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"name": "spaces/A", "displayName": "Alpha", "spaceType": "SPACE",
-			})
-		case "/v1/spaces/DM1/members":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"memberships": []map[string]any{
-					{"name": "spaces/DM1/members/1", "member": map[string]any{"name": "users/1", "displayName": "Linh Tran"}},
-				},
 			})
 		default:
 			http.NotFound(w, r)
@@ -348,13 +342,5 @@ func TestFindDirectMessageAndGetSpaceAndMembers(t *testing.T) {
 	}
 	if sp.DisplayName != "Alpha" {
 		t.Fatalf("GetSpace = %+v", sp)
-	}
-
-	mem, err := cl.ListMembers(ctx, "spaces/DM1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(mem) != 1 || mem[0].Member.DisplayName != "Linh Tran" {
-		t.Fatalf("ListMembers = %+v", mem)
 	}
 }

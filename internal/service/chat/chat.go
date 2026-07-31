@@ -181,34 +181,3 @@ func (c *Client) SpaceReadState(ctx context.Context, spaceName string) (string, 
 	}
 	return rs.Name, ts, nil
 }
-
-// ListMembers returns the memberships of a space, following all pages. It is
-// only needed to name a DM whose window contains nothing but the caller's own
-// messages.
-func (c *Client) ListMembers(ctx context.Context, spaceName string) ([]*chatapi.Membership, error) {
-	var out []*chatapi.Membership
-	token := ""
-	for page := 0; ; page++ {
-		if page >= maxPages {
-			return nil, fmt.Errorf("chat: list members exceeded %d pages; refusing to keep paging", maxPages)
-		}
-		call := c.svc.Spaces.Members.List(spaceName).Context(ctx).
-			PageSize(pageSize).
-			Fields("memberships(name,member(name,displayName,type)),nextPageToken")
-		if token != "" {
-			call = call.PageToken(token)
-		}
-		res, err := call.Do()
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, res.Memberships...)
-		if res.NextPageToken == "" {
-			return out, nil
-		}
-		if res.NextPageToken == token {
-			return nil, fmt.Errorf("chat: list members got a repeating page token %q; refusing to keep paging", token)
-		}
-		token = res.NextPageToken
-	}
-}
