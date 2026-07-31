@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"google.golang.org/api/option"
 )
@@ -153,3 +155,32 @@ func TestNameWarningNamesTheFix(t *testing.T) {
 		}
 	}
 }
+
+func TestLookupCancelledContext(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(50 * time.Millisecond)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	d, err := newPeopleDirectory(context.Background(), srv.Client(),
+		option.WithEndpoint(srv.URL+"/"), option.WithoutAuthentication())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // Pre-cancel context
+
+	ids := make([]string, 100)
+	for i := range ids {
+		ids[i] = fmt.Sprintf("users/%d", i)
+	}
+
+	_, lookupErr := d.Lookup(ctx, ids)
+	if !errors.Is(lookupErr, context.Canceled) {
+		t.Fatalf("Lookup with cancelled context got error %v, want %v", lookupErr, context.Canceled)
+	}
+}
+

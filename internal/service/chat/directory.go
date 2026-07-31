@@ -84,6 +84,7 @@ func (d *peopleDirectory) Lookup(ctx context.Context, ids []string) (map[string]
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, maxConcurrentBatches)
 
+launch:
 	for start := 0; start < len(ids); start += peopleBatchSize {
 		end := min(start+peopleBatchSize, len(ids))
 		select {
@@ -94,7 +95,7 @@ func (d *peopleDirectory) Lookup(ctx context.Context, ids []string) (map[string]
 				firstErr = ctx.Err()
 			}
 			mu.Unlock()
-			break
+			break launch
 		}
 		wg.Add(1)
 		go func(batch []string) {

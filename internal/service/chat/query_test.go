@@ -1140,3 +1140,41 @@ func TestUnreadReportsSpacesWhoseReadStateFailed(t *testing.T) {
 		t.Fatalf("the underlying error must survive: %v", res.Errors[0].Err)
 	}
 }
+
+type fakeCacheDirectory struct {
+	nullDirectory
+	recalled map[string]Person
+}
+
+func (f fakeCacheDirectory) Recall(id string) (Person, bool) {
+	p, ok := f.recalled[id]
+	return p, ok
+}
+
+func (f fakeCacheDirectory) Remember(id string, p Person) {}
+func (f fakeCacheDirectory) Flush()                      {}
+
+func TestSpaceNameIgnoresUnresolvedUserIDs(t *testing.T) {
+	sc := spaceScan{
+		space: &chatapi.Space{Name: "spaces/DM123"},
+		msgs: []MessageInfo{
+			{
+				Sender: Sender{
+					Name: "users/123456789", // Unresolved raw user ID
+					IsMe: false,
+				},
+			},
+		},
+	}
+	dir := fakeCacheDirectory{
+		recalled: map[string]Person{
+			"spaces/DM123": {Name: "Alice Smith"},
+		},
+	}
+
+	got := spaceName(sc, dir)
+	if got != "Alice Smith" {
+		t.Fatalf("spaceName() = %q, want %q", got, "Alice Smith")
+	}
+}
+

@@ -468,11 +468,12 @@ func (e *Engine) scanSpaces(ctx context.Context, spaces []*chatapi.Space, q Quer
 	var done int32
 	sem := make(chan struct{}, maxConcurrentSpaces)
 
+launch:
 	for i, sp := range spaces {
 		select {
 		case sem <- struct{}{}:
 		case <-ctx.Done():
-			break
+			break launch
 		}
 		wg.Add(1)
 		go func(i int, sp *chatapi.Space) {
@@ -834,7 +835,7 @@ func spaceName(sc spaceScan, dir Directory) string {
 		return sc.space.DisplayName
 	}
 	for _, m := range sc.msgs {
-		if !m.Sender.IsMe && m.Sender.Name != "" {
+		if !m.Sender.IsMe && m.Sender.Name != "" && !strings.HasPrefix(m.Sender.Name, "users/") {
 			return m.Sender.Name
 		}
 	}
@@ -981,11 +982,12 @@ func (e *Engine) probeSenders(ctx context.Context, spaces []*chatapi.Space, meID
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, maxConcurrentSpaces)
+launch:
 	for _, sp := range spaces {
 		select {
 		case sem <- struct{}{}:
 		case <-ctx.Done():
-			break
+			break launch
 		}
 		wg.Add(1)
 		go func(sp *chatapi.Space) {
