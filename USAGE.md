@@ -247,13 +247,17 @@ OAuth client's project.
 **Thread titles.** Chat has no thread-title field — a thread's subject is
 whatever its first message says. Every command that shows threads labels each
 one with that first message, `Sender · "excerpt"`, in the default tree output,
-and carries it untruncated as `thread.title` in JSON. (`--group flat` and the
-`table` and `csv` formats have no thread header, so they show the short thread
-ID as before.) When the first message falls outside the
-window you scanned, it is fetched: one extra request per such thread, eight at a
-time. A first message that cannot be read (deleted, or in a space you have lost
-access to) costs the thread its title and prints one warning line to stderr;
-nothing fails. Titles are never cached, so an edited subject shows up on the
+and carries it untruncated as `thread.title` in JSON, alongside
+`thread.headSender` — for a partial thread that first message is not in
+`messages`, so its author would otherwise appear nowhere. (`--group flat` and
+`--output table` have no thread header, so they show the short thread ID as
+before, and they do not pay for a title they cannot print.) When the first
+message falls outside the window you scanned, it is fetched: one extra request
+per such thread, eight at a time. A first message that cannot be read (deleted,
+or in a space you have lost access to) costs the thread its title and prints one
+warning line to stderr; nothing fails. A first message that is only an
+attachment or a card has no text to quote, so the label is just the name of
+whoever posted it. Titles are never cached, so an edited subject shows up on the
 next run.
 
 ### `chat spaces`

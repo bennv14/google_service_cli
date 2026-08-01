@@ -9,11 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Thread titles. `gsvc chat` now labels every thread with its opening message —
-  `Sender · "excerpt"` in text output, `thread.title` (untruncated) in JSON.
-  Google Chat has no thread-title field, so the opening message is fetched when
-  the scanned window did not already contain it: one request per such thread,
-  eight at a time, never cached. This matters most for `gsvc chat mentions`,
+- Thread titles. `gsvc chat` now labels each thread it heads with its opening
+  message — `Sender · "excerpt"` in the default tree output, `thread.title`
+  (untruncated) and `thread.headSender` in JSON. Chat has no thread-title field,
+  so the opening message is fetched when the scan did not already contain it: one
+  request per such thread, eight at a time, never cached. That cost is only paid
+  by output with a thread header, so `--group flat`, `--output table`, and
+  `chat spaces --unread` skip it. This matters most for `gsvc chat mentions`,
   where the thread you were mentioned in almost always began before the window.
 
 ### Fixed
