@@ -93,6 +93,10 @@ type API interface {
 	ListMessages(ctx context.Context, parent string, o ListOpts) ([]*chatapi.Message, error)
 	SpaceReadState(ctx context.Context, spaceName string) (string, time.Time, error)
 	LatestMessages(ctx context.Context, parent string, n int) ([]*chatapi.Message, error)
+	// GetMessage fetches one message by name. It exists for thread titles: a
+	// thread's opening message is often outside the scanned window, and there
+	// is no other way to read it.
+	GetMessage(ctx context.Context, name string) (*chatapi.Message, error)
 }
 
 var _ API = (*Client)(nil)
