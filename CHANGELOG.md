@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Thread titles. `gsvc chat` now labels every thread with its opening message —
+  `Sender · "excerpt"` in text output, `thread.title` (untruncated) in JSON.
+  Google Chat has no thread-title field, so the opening message is fetched when
+  the scanned window did not already contain it: one request per such thread,
+  eight at a time, never cached. This matters most for `gsvc chat mentions`,
+  where the thread you were mentioned in almost always began before the window.
+
+### Fixed
+
+- A partial thread's label no longer credits the wrong person with starting it.
+  It named the thread after the earliest message *in hand*, which for a thread
+  that began before the scanned window is a mid-thread reply.
+
 ## [v2.0.3] - 2026-07-31
 
 ### Added

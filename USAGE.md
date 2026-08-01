@@ -244,6 +244,16 @@ gsvc drive upload ./notes.md --to 1FolderId --name "Meeting notes.md"
 Read-only. Requires a Google Workspace account and the Chat API enabled in your
 OAuth client's project.
 
+**Thread titles.** Chat has no thread-title field — a thread's subject is
+whatever its first message says. Every command that shows threads shows that
+first message as the thread's label, `Sender · "excerpt"`, and carries it
+untruncated as `thread.title` in JSON. When the first message falls outside the
+window you scanned, it is fetched: one extra request per such thread, eight at a
+time. A first message that cannot be read (deleted, or in a space you have lost
+access to) costs the thread its title and prints one warning line to stderr;
+nothing fails. Titles are never cached, so an edited subject shows up on the
+next run.
+
 ### `chat spaces`
 
 List the spaces you belong to. This lists *spaces*, never messages.
@@ -334,6 +344,10 @@ narrow the window.
 gsvc chat mentions
 gsvc chat mentions --since 30d
 ```
+
+A thread's first message almost never mentions you and is usually older than the
+window besides, so most threads here come back `partial`. Their titles are
+fetched so that a mention still arrives with the question it answers.
 
 ### `chat thread`
 
