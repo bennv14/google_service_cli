@@ -135,9 +135,10 @@ func headMessageName(threadID string) (string, bool) {
 // has no batch-get, so N missing heads cost N requests.
 //
 // The messages come back one per ref, positionally; a nil entry means that
-// fetch failed. The count is of fetches that were attempted and failed, so a
-// cancelled run — where the remaining refs are never attempted — does not
-// report a hundred deleted messages that were nothing of the kind.
+// fetch failed, or was never attempted because the context was cancelled
+// first. The count is only of fetches that were attempted and failed, so a
+// cancelled run reports the handful that were in flight rather than every ref
+// it never got to.
 func (e *Engine) fetchHeads(ctx context.Context, refs []headRef) ([]*chatapi.Message, int) {
 	out := make([]*chatapi.Message, len(refs))
 	failed := make([]bool, len(refs))
