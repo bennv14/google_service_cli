@@ -48,9 +48,15 @@ type MessageInfo struct {
 }
 
 // ThreadInfo describes a thread. Partial means the thread's first message is
-// outside the scanned window, so only its tail is shown.
+// outside the scanned window, so only its tail is shown. Title is that first
+// message's text, verbatim and untruncated — Chat has no thread-title field, so
+// the subject of a thread is whatever its opening message says. HeadSender is
+// the resolved name of whoever started it, carried for the text renderer and
+// kept out of JSON, following the precedent of MessageInfo.ThreadID.
 type ThreadInfo struct {
 	ID           string    `json:"id"`
+	Title        string    `json:"title,omitempty"`
+	HeadSender   string    `json:"-"`
 	Partial      bool      `json:"partial"`
 	MessageCount int       `json:"messageCount"`
 	LastActivity time.Time `json:"lastActivity"`

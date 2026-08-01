@@ -308,6 +308,9 @@ func (e *Engine) Run(ctx context.Context, q Query) (Result, error) {
 	e.resolveNames(ctx, scans)
 	groups := group(scans, q, since, e.dir)
 	groups = applyThreadLimit(groups, q.ThreadLimit)
+	// After the thread limit, so threads that were cut cost nothing; before
+	// saveNames, so the names learned from head senders are persisted.
+	e.resolveThreadTitles(ctx, groups)
 	recount(groups)
 	e.saveNames()
 
