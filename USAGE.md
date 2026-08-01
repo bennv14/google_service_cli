@@ -245,9 +245,11 @@ Read-only. Requires a Google Workspace account and the Chat API enabled in your
 OAuth client's project.
 
 **Thread titles.** Chat has no thread-title field — a thread's subject is
-whatever its first message says. Every command that shows threads shows that
-first message as the thread's label, `Sender · "excerpt"`, and carries it
-untruncated as `thread.title` in JSON. When the first message falls outside the
+whatever its first message says. Every command that shows threads labels each
+one with that first message, `Sender · "excerpt"`, in the default tree output,
+and carries it untruncated as `thread.title` in JSON. (`--group flat` and the
+`table` and `csv` formats have no thread header, so they show the short thread
+ID as before.) When the first message falls outside the
 window you scanned, it is fetched: one extra request per such thread, eight at a
 time. A first message that cannot be read (deleted, or in a space you have lost
 access to) costs the thread its title and prints one warning line to stderr;
