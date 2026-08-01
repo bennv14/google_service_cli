@@ -49,7 +49,14 @@ func (e *Engine) resolveThreadTitles(ctx context.Context, groups []SpaceGroup) {
 	// A head the scan never saw usually introduces a sender the scan never
 	// saw either, so their names are collected and resolved together.
 	pending := map[string][]*ThreadInfo{}
-	for i, m := range e.fetchHeads(ctx, refs) {
+	heads, failures := e.fetchHeads(ctx, refs)
+	// One line however many heads were unreadable. A deleted message, a space
+	// we lost access to, or a plain 404 all land here, and none of them is
+	// worth failing a read command over.
+	if failures > 0 {
+		e.warn(plural(failures, "thread", "threads") + ": could not read the opening message")
+	}
+	for i, m := range heads {
 		if m == nil {
 			continue
 		}
@@ -127,10 +134,13 @@ func headMessageName(threadID string) (string, bool) {
 // maxConcurrentSpaces like every other fan-out in this package. The Chat API
 // has no batch-get, so N missing heads cost N requests.
 //
-// The result has one entry per ref, positionally. A nil entry means the fetch
-// failed, or was never attempted because the context was cancelled first.
-func (e *Engine) fetchHeads(ctx context.Context, refs []headRef) []*chatapi.Message {
+// The messages come back one per ref, positionally; a nil entry means that
+// fetch failed. The count is of fetches that were attempted and failed, so a
+// cancelled run — where the remaining refs are never attempted — does not
+// report a hundred deleted messages that were nothing of the kind.
+func (e *Engine) fetchHeads(ctx context.Context, refs []headRef) ([]*chatapi.Message, int) {
 	out := make([]*chatapi.Message, len(refs))
+	failed := make([]bool, len(refs))
 
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, maxConcurrentSpaces)
@@ -148,11 +158,19 @@ launch:
 
 			m, err := e.api.GetMessage(ctx, r.name)
 			if err != nil {
-				return // out[i] stays nil
+				failed[i] = true
+				return
 			}
 			out[i] = m
 		}(i, r)
 	}
 	wg.Wait()
-	return out
+
+	n := 0
+	for _, f := range failed {
+		if f {
+			n++
+		}
+	}
+	return out, n
 }
