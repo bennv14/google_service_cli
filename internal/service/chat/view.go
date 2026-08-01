@@ -51,12 +51,20 @@ type MessageInfo struct {
 // outside the scanned window, so only its tail is shown. Title is that first
 // message's text, verbatim and untruncated — Chat has no thread-title field, so
 // the subject of a thread is whatever its opening message says. HeadSender is
-// the resolved name of whoever started it, carried for the text renderer and
-// kept out of JSON, following the precedent of MessageInfo.ThreadID.
+// the resolved name of whoever started it. It is in JSON despite being a name
+// the renderer also prints, because a partial thread's opening message is by
+// definition not in Messages: without it a consumer could read the title and
+// have no way to learn who wrote it.
+//
+// headKnown records that the opening message was read, which is not the same as
+// Title being set: a thread opened by an attachment, image, or card has a head
+// with no text at all. The renderer needs the difference, because "the head says
+// nothing" and "we never found the head" call for different labels.
 type ThreadInfo struct {
 	ID           string    `json:"id"`
 	Title        string    `json:"title,omitempty"`
-	HeadSender   string    `json:"-"`
+	HeadSender   string    `json:"headSender,omitempty"`
+	headKnown    bool      // see above; unexported, like every other render-only hint
 	Partial      bool      `json:"partial"`
 	MessageCount int       `json:"messageCount"`
 	LastActivity time.Time `json:"lastActivity"`

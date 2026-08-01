@@ -242,29 +242,50 @@ func allMessages(sg SpaceGroup) []MessageInfo {
 }
 
 // threadLabel names a thread by its opening message: who started it and a
-// snippet. Thread.Title is that message's text even when the message itself sat
-// outside the scanned window, so it wins over the earliest message in hand —
-// which for a partial thread is a mid-thread reply, and would credit the wrong
-// person with starting the thread and quote the wrong text.
+// snippet. That message is preferred even when it sat outside the scanned
+// window, because the earliest message in hand is, for a partial thread, a
+// mid-thread reply — labelling with it credits the wrong person and quotes the
+// wrong text.
+//
+// The test is headKnown rather than a non-empty title: a thread opened by an
+// attachment or a card has a head with no text, and its sender is still the
+// right person to name. Falling back to the reply because the head said nothing
+// is the same misattribution by another route.
 func threadLabel(tg ThreadGroup) string {
-	if tg.Thread.Title != "" {
-		return withSender(tg.Thread.HeadSender, tg.Thread.Title)
+	if tg.Thread.headKnown {
+		// A head that names nobody and says nothing leaves only the ID; the
+		// reply is not a substitute for it.
+		return orShortID(withSender(tg.Thread.HeadSender, tg.Thread.Title), tg.Thread.ID)
 	}
 	if len(tg.Messages) == 0 {
 		return shortID(tg.Thread.ID)
 	}
 	head := tg.Messages[0]
-	return withSender(head.Sender.Name, head.Text)
+	return orShortID(withSender(head.Sender.Name, head.Text), tg.Thread.ID)
 }
 
-// withSender formats `Sender · "excerpt"`, dropping the prefix entirely when
-// there is nobody to name rather than opening the line with a bare separator.
+// withSender formats `Sender · "excerpt"`. Either half can be missing — an
+// attachment-only opening message has no text, a sender we could not resolve has
+// no name — and the empty half is dropped rather than printed as a bare
+// separator or an empty pair of quotes. With both missing the result is empty
+// and the caller falls back to the ID.
 func withSender(sender, text string) string {
+	if text == "" {
+		return sender
+	}
 	quoted := `"` + excerpt(oneLine(text), excerptWidth) + `"`
 	if sender == "" {
 		return quoted
 	}
 	return sender + " · " + quoted
+}
+
+// orShortID keeps a thread header from rendering as nothing at all.
+func orShortID(label, threadID string) string {
+	if label == "" {
+		return shortID(threadID)
+	}
+	return label
 }
 
 func threadMeta(tg ThreadGroup, o RenderOpts) seg {
