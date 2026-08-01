@@ -33,6 +33,17 @@ func (e *Engine) resolveThreadTitles(ctx context.Context, groups []SpaceGroup) {
 			if m, ok := headInHand(tg.Messages); ok {
 				tg.Thread.Title = m.Text
 				tg.Thread.HeadSender = m.Sender.Name
+				tg.Thread.headKnown = true
+				continue
+			}
+			// A thread the scan does not call partial has its opening message
+			// in hand even though no message name parsed — isThreadHead's
+			// "cannot tell" case, an app that assigns its own message IDs. The
+			// derived {tid}.{tid} name is not that message's name, so fetching
+			// it would spend a request to 404 and then warn about an opening
+			// message that was never missing. The renderer's earliest message
+			// in hand is the head here, so leaving the title unset is right.
+			if !tg.Thread.Partial {
 				continue
 			}
 			name, ok := headMessageName(tg.Thread.ID)
@@ -52,8 +63,10 @@ func (e *Engine) resolveThreadTitles(ctx context.Context, groups []SpaceGroup) {
 	heads, failures := e.fetchHeads(ctx, refs)
 	// One line however many heads were unreadable. A deleted message, a space
 	// we lost access to, or a plain 404 all land here, and none of them is
-	// worth failing a read command over.
-	if failures > 0 {
+	// worth failing a read command over. On Ctrl-C the in-flight fetches fail
+	// too, and reporting those would tell the user their opening messages are
+	// unreadable when all that happened is that they interrupted the run.
+	if failures > 0 && ctx.Err() == nil {
 		e.warn(plural(failures, "thread", "threads") + ": could not read the opening message")
 	}
 	for i, m := range heads {
@@ -69,6 +82,7 @@ func (e *Engine) resolveThreadTitles(ctx context.Context, groups []SpaceGroup) {
 		th := &groups[refs[i].group].Threads[refs[i].thread].Thread
 		th.Title = mi.Text
 		th.HeadSender = mi.Sender.Name
+		th.headKnown = true
 		if id := mi.Sender.ID; id != "" {
 			pending[id] = append(pending[id], th)
 		}

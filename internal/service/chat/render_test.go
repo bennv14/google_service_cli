@@ -301,7 +301,7 @@ func TestThreadLabelPrefersTheTitle(t *testing.T) {
 	tg := ThreadGroup{
 		Thread: ThreadInfo{
 			ID:    "spaces/A/threads/t2",
-			Title: "Friday deploy plan", HeadSender: "Linh Tran", Partial: true,
+			Title: "Friday deploy plan", HeadSender: "Linh Tran", headKnown: true, Partial: true,
 		},
 		Messages: []MessageInfo{
 			{ID: "spaces/A/messages/t2.zz", CreateTime: at(t, "15:40"),
@@ -329,7 +329,9 @@ func TestThreadLabelWithoutATitleIsUnchanged(t *testing.T) {
 }
 
 func TestThreadLabelWithNoSenderIsJustTheQuote(t *testing.T) {
-	tg := ThreadGroup{Thread: ThreadInfo{ID: "spaces/A/threads/t2", Title: "Friday deploy plan"}}
+	tg := ThreadGroup{Thread: ThreadInfo{
+		ID: "spaces/A/threads/t2", Title: "Friday deploy plan", headKnown: true,
+	}}
 	want := `"Friday deploy plan"`
 	if got := threadLabel(tg); got != want {
 		t.Fatalf("threadLabel = %q, want %q", got, want)
@@ -340,7 +342,7 @@ func TestThreadLabelTruncatesALongTitle(t *testing.T) {
 	// The title is stored verbatim; truncation is the renderer's business.
 	long := strings.Repeat("a", excerptWidth+10)
 	tg := ThreadGroup{Thread: ThreadInfo{
-		ID: "spaces/A/threads/t2", Title: long, HeadSender: "Linh Tran",
+		ID: "spaces/A/threads/t2", Title: long, HeadSender: "Linh Tran", headKnown: true,
 	}}
 	want := `Linh Tran · "` + strings.Repeat("a", excerptWidth) + `…"`
 	if got := threadLabel(tg); got != want {
@@ -351,6 +353,7 @@ func TestThreadLabelTruncatesALongTitle(t *testing.T) {
 func TestThreadLabelCollapsesAMultiLineTitle(t *testing.T) {
 	tg := ThreadGroup{Thread: ThreadInfo{
 		ID: "spaces/A/threads/t2", Title: "Friday\n  deploy\tplan", HeadSender: "Linh Tran",
+		headKnown: true,
 	}}
 	want := `Linh Tran · "Friday deploy plan"`
 	if got := threadLabel(tg); got != want {
@@ -362,6 +365,7 @@ func TestTextTreeShowsTheThreadTitle(t *testing.T) {
 	r := threadedResult(t)
 	r.Spaces[0].Threads[1].Thread.Title = "Friday deploy plan"
 	r.Spaces[0].Threads[1].Thread.HeadSender = "Linh Tran"
+	r.Spaces[0].Threads[1].Thread.headKnown = true
 
 	var buf bytes.Buffer
 	if err := r.Text(&buf); err != nil {

@@ -54,10 +54,16 @@ func TestTitleComesFromTheHeadAlreadyInHand(t *testing.T) {
 	}
 }
 
-func TestTitleIsInJSONAndTheHeadSenderIsNot(t *testing.T) {
+func TestJSONCarriesTheTitleAndItsAuthor(t *testing.T) {
+	// Only a reply is in hand, so the opening message is not in messages[] at
+	// all — which is exactly why its sender has to travel with the title.
 	api := titleAPI(t,
-		rawMsg("spaces/A/messages/t1.t1", "spaces/A/threads/t1", "users/1", "Linh", "Friday deploy plan", "2026-07-25T09:00:00Z"),
+		rawMsg("spaces/A/messages/t1.t9", "spaces/A/threads/t1", "users/2", "Huy", "which server?", "2026-07-25T09:05:00Z"),
 	)
+	api.getMessage = func(name string) (*chatapi.Message, error) {
+		return rawMsg(name, "spaces/A/threads/t1", "users/1", "Linh", "Friday deploy plan", "2026-07-20T09:00:00Z"), nil
+	}
+
 	b, err := json.Marshal(titleRun(t, api, &fakeDirectory{}))
 	if err != nil {
 		t.Fatal(err)
@@ -66,9 +72,26 @@ func TestTitleIsInJSONAndTheHeadSenderIsNot(t *testing.T) {
 	if !strings.Contains(got, `"title":"Friday deploy plan"`) {
 		t.Fatalf("title is missing from the thread level:\n%s", got)
 	}
-	// HeadSender is carried for the text renderer only, like MessageInfo.ThreadID.
-	if strings.Contains(strings.ToLower(got), "headsender") {
-		t.Fatalf("HeadSender must never reach JSON:\n%s", got)
+	if !strings.Contains(got, `"headSender":"Linh"`) {
+		t.Fatalf("the title's author is missing, and is nowhere else in the payload:\n%s", got)
+	}
+	if strings.Contains(got, `"Friday deploy plan"`) && !strings.Contains(got, `"which server?"`) {
+		t.Fatalf("the reply should still be the only message listed:\n%s", got)
+	}
+}
+
+func TestAThreadWithNoKnownHeadOmitsBothFields(t *testing.T) {
+	api := titleAPI(t,
+		rawMsg("spaces/A/messages/weird", "", "users/2", "Huy", "orphan", "2026-07-25T09:05:00Z"),
+	)
+	b, err := json.Marshal(titleRun(t, api, &fakeDirectory{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{`"title"`, `"headSender"`} {
+		if strings.Contains(string(b), field) {
+			t.Fatalf("%s must be omitted when there is no head to describe:\n%s", field, b)
+		}
 	}
 }
 
@@ -268,6 +291,59 @@ func TestHeadWithNoTextYieldsNoTitle(t *testing.T) {
 	if strings.Contains(string(b), `"title"`) {
 		t.Fatalf("an empty title must be omitted from JSON:\n%s", b)
 	}
+
+	// The half that matters: no title does not mean no head. Linh opened this
+	// thread with an attachment and Huy only replied to it, so labelling the
+	// thread "Huy" is the same misattribution as labelling a partial thread by
+	// its earliest reply — reached by a different route.
+	tg := res.Spaces[0].Threads[0]
+	if got := threadLabel(tg); got != "Linh" {
+		t.Fatalf("threadLabel = %q, want %q: a text-less head still names who opened the thread", got, "Linh")
+	}
+}
+
+func TestHeadWithNeitherTextNorSenderFallsBackToTheID(t *testing.T) {
+	// Nothing usable came back, but the head was still read: the reply is not a
+	// substitute for it, so the label degrades to the ID rather than to Huy.
+	api := titleAPI(t,
+		rawMsg("spaces/A/messages/t1.t9", "spaces/A/threads/t1", "users/2", "Huy", "one", "2026-07-25T09:05:00Z"),
+	)
+	api.getMessage = func(name string) (*chatapi.Message, error) {
+		m := rawMsg(name, "", "", "", "", "2026-07-20T09:00:00Z")
+		m.Sender = nil
+		return m, nil
+	}
+
+	res := titleRun(t, api, &fakeDirectory{})
+
+	if got := threadLabel(res.Spaces[0].Threads[0]); got != "t1" {
+		t.Fatalf("threadLabel = %q, want the short thread ID", got)
+	}
+}
+
+func TestAppAssignedMessageIDsCostNoRequestAndNoWarning(t *testing.T) {
+	// Chat lets apps set their own message IDs ("client-…"), which break the
+	// {tid}.{mid} convention. isPartial cannot see a head in such a thread, but
+	// it does not call it partial either — and it is right not to: the head is
+	// in hand. Deriving spaces/A/messages/t1.t1 would fetch a name that does
+	// not exist, then warn about an opening message that was never missing.
+	api := titleAPI(t,
+		rawMsg("spaces/A/messages/client-abc", "spaces/A/threads/t1", "users/1", "Linh", "Friday deploy plan", "2026-07-25T09:00:00Z"),
+	)
+	api.getMessage = func(name string) (*chatapi.Message, error) {
+		t.Fatalf("unexpected GetMessage(%q): the opening message is already in hand", name)
+		return nil, nil
+	}
+
+	res := titleRun(t, api, &fakeDirectory{})
+
+	if len(res.Warnings) != 0 {
+		t.Fatalf("warnings = %v; nothing here is unreadable", res.Warnings)
+	}
+	// The label still comes out right, from the message in hand.
+	if got := threadLabel(res.Spaces[0].Threads[0]); got != `Linh · "Friday deploy plan"` {
+		t.Fatalf("threadLabel = %q", got)
+	}
 }
 
 func TestHeadsAreAppliedToTheirOwnSpaceAndThread(t *testing.T) {
@@ -378,20 +454,35 @@ func TestCancelledContextStopsHeadFetching(t *testing.T) {
 	for i := 0; i < threads; i++ {
 		tid := fmt.Sprintf("t%d", i)
 		groups[0].Threads = append(groups[0].Threads, ThreadGroup{
-			Thread: ThreadInfo{ID: "spaces/A/threads/" + tid},
+			// Partial is what makes a head worth fetching, so without it this
+			// test would prove nothing: no thread would be a candidate and the
+			// count would sit at zero however broken cancellation was.
+			Thread: ThreadInfo{ID: "spaces/A/threads/" + tid, Partial: true},
 			Messages: []MessageInfo{{
 				ID: "spaces/A/messages/" + tid + ".zz", Sender: Sender{Name: "Huy"}, Text: "reply",
 			}},
 		})
 	}
 
-	NewEngine(api, &fakeDirectory{}).resolveThreadTitles(ctx, groups)
+	e := NewEngine(api, &fakeDirectory{})
+	e.resolveThreadTitles(ctx, groups)
 
-	// The launch loop selects between the semaphore and ctx.Done(). With the
-	// context already cancelled it cannot reach the hundredth thread; without
-	// the ctx.Done() branch it would queue every one of them.
-	if got := api.getMessageCalls(); got >= threads {
-		t.Fatalf("GetMessage called %d times for %d threads; cancellation must stop the fan-out", got, threads)
+	// Whatever did slip out failed with context.Canceled. Reporting those would
+	// tell the user their opening messages are unreadable when all they did was
+	// press Ctrl-C — and nondeterministically, since the count is a race.
+	if w := e.warnings(); len(w) != 0 {
+		t.Fatalf("warnings = %v; an interrupted run must not blame the opening messages", w)
+	}
+
+	// The launch loop selects between the semaphore and ctx.Done(). Both are
+	// ready here, and select picks at random, so a couple of fetches can slip
+	// out before one of the coin flips lands on Done — but the odds of more
+	// than a handful are vanishing (2^-25), while without the ctx.Done() branch
+	// all hundred would launch. Asserting merely "< 100" would pass even if 99
+	// did, which is cancellation failing.
+	const slack = 25
+	if got := api.getMessageCalls(); got > slack {
+		t.Fatalf("GetMessage called %d times for %d threads; cancellation must stop the fan-out after a few at most", got, threads)
 	}
 	for _, tg := range groups[0].Threads {
 		if tg.Thread.Title != "" {
