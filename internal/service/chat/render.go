@@ -241,13 +241,30 @@ func allMessages(sg SpaceGroup) []MessageInfo {
 	return out
 }
 
-// threadLabel names a thread by its first message: who started it and a snippet.
+// threadLabel names a thread by its opening message: who started it and a
+// snippet. Thread.Title is that message's text even when the message itself sat
+// outside the scanned window, so it wins over the earliest message in hand —
+// which for a partial thread is a mid-thread reply, and would credit the wrong
+// person with starting the thread and quote the wrong text.
 func threadLabel(tg ThreadGroup) string {
+	if tg.Thread.Title != "" {
+		return withSender(tg.Thread.HeadSender, tg.Thread.Title)
+	}
 	if len(tg.Messages) == 0 {
 		return shortID(tg.Thread.ID)
 	}
 	head := tg.Messages[0]
-	return head.Sender.Name + ` · "` + excerpt(oneLine(head.Text), excerptWidth) + `"`
+	return withSender(head.Sender.Name, head.Text)
+}
+
+// withSender formats `Sender · "excerpt"`, dropping the prefix entirely when
+// there is nobody to name rather than opening the line with a bare separator.
+func withSender(sender, text string) string {
+	quoted := `"` + excerpt(oneLine(text), excerptWidth) + `"`
+	if sender == "" {
+		return quoted
+	}
+	return sender + " · " + quoted
 }
 
 func threadMeta(tg ThreadGroup, o RenderOpts) seg {
