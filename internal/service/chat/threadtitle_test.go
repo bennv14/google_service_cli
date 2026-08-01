@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"testing"
 
@@ -266,6 +267,102 @@ func TestHeadWithNoTextYieldsNoTitle(t *testing.T) {
 	}
 	if strings.Contains(string(b), `"title"`) {
 		t.Fatalf("an empty title must be omitted from JSON:\n%s", b)
+	}
+}
+
+func TestHeadsAreAppliedToTheirOwnSpaceAndThread(t *testing.T) {
+	// titleAPI only ever serves spaces/A, so every other test in this file
+	// runs headRef.group at a constant 0 — an implementation that dropped the
+	// index entirely and wrote every fetched head into groups[0] would still
+	// pass all of them. Two spaces, each holding one headed thread (its
+	// opening message already in the scan window) and one headless thread
+	// (opening message outside it), with four distinct titles, is what it
+	// takes to prove a fetched head lands back on the thread it came from.
+	api := &fakeAPI{
+		t: t,
+		spaces: []*chatapi.Space{
+			{Name: "spaces/A", DisplayName: "Alpha", SpaceType: "SPACE", SpaceThreadingState: "THREADED_MESSAGES"},
+			{Name: "spaces/B", DisplayName: "Beta", SpaceType: "SPACE", SpaceThreadingState: "THREADED_MESSAGES"},
+		},
+		messages: func(parent string, _ ListOpts) ([]*chatapi.Message, error) {
+			switch parent {
+			case "spaces/A":
+				return []*chatapi.Message{
+					// a1: headed — its own opening message is right here.
+					rawMsg("spaces/A/messages/a1.a1", "spaces/A/threads/a1", "users/1", "Linh", "Alpha headed title", "2026-07-25T09:00:00Z"),
+					// a2: headless — only a reply is in hand.
+					rawMsg("spaces/A/messages/a2.reply", "spaces/A/threads/a2", "users/2", "Huy", "which server?", "2026-07-25T09:05:00Z"),
+				}, nil
+			case "spaces/B":
+				return []*chatapi.Message{
+					rawMsg("spaces/B/messages/b1.b1", "spaces/B/threads/b1", "users/3", "Mai", "Beta headed title", "2026-07-25T08:00:00Z"),
+					rawMsg("spaces/B/messages/b2.reply", "spaces/B/threads/b2", "users/4", "Nam", "one more thing", "2026-07-25T08:05:00Z"),
+				}, nil
+			}
+			return nil, nil
+		},
+	}
+	api.getMessage = func(name string) (*chatapi.Message, error) {
+		switch name {
+		case "spaces/A/messages/a2.a2":
+			return rawMsg(name, "spaces/A/threads/a2", "users/5", "Vy", "Alpha headless title", "2026-07-20T09:00:00Z"), nil
+		case "spaces/B/messages/b2.b2":
+			return rawMsg(name, "spaces/B/threads/b2", "users/6", "Khoa", "Beta headless title", "2026-07-20T08:00:00Z"), nil
+		}
+		t.Fatalf("unexpected GetMessage(%q)", name)
+		return nil, nil
+	}
+
+	res := titleRun(t, api, &fakeDirectory{})
+
+	space := func(id string) SpaceGroup {
+		for _, sg := range res.Spaces {
+			if sg.Space.ID == id {
+				return sg
+			}
+		}
+		t.Fatalf("space %s missing from result", id)
+		return SpaceGroup{}
+	}
+	thread := func(sg SpaceGroup, id string) ThreadInfo {
+		for _, tg := range sg.Threads {
+			if tg.Thread.ID == id {
+				return tg.Thread
+			}
+		}
+		t.Fatalf("thread %s missing from space %s", id, sg.Space.ID)
+		return ThreadInfo{}
+	}
+
+	cases := []struct {
+		threadID, wantTitle, wantSender string
+	}{
+		{"spaces/A/threads/a1", "Alpha headed title", "Linh"},
+		{"spaces/A/threads/a2", "Alpha headless title", "Vy"},
+		{"spaces/B/threads/b1", "Beta headed title", "Mai"},
+		{"spaces/B/threads/b2", "Beta headless title", "Khoa"},
+	}
+	spaceOf := map[string]string{
+		"spaces/A/threads/a1": "spaces/A", "spaces/A/threads/a2": "spaces/A",
+		"spaces/B/threads/b1": "spaces/B", "spaces/B/threads/b2": "spaces/B",
+	}
+	for _, c := range cases {
+		th := thread(space(spaceOf[c.threadID]), c.threadID)
+		if th.Title != c.wantTitle {
+			t.Errorf("%s: title = %q, want %q", c.threadID, th.Title, c.wantTitle)
+		}
+		if th.HeadSender != c.wantSender {
+			t.Errorf("%s: head sender = %q, want %q", c.threadID, th.HeadSender, c.wantSender)
+		}
+	}
+
+	// The headed threads' titles came from messages already in hand; only the
+	// two headless threads should have cost a request.
+	got := api.getMessageNames()
+	sort.Strings(got)
+	want := []string{"spaces/A/messages/a2.a2", "spaces/B/messages/b2.b2"}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("GetMessage names = %v, want exactly %v", got, want)
 	}
 }
 
