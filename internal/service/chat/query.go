@@ -255,11 +255,12 @@ type Query struct {
 	Now          time.Time // injected by tests; zero means time.Now()
 	Progress     io.Writer // progress ticks for expensive scans; nil = quiet
 
-	// skipThreadTitles suppresses the head-message fetch. `chat spaces
-	// --unread` runs a full scan but prints one line per space, so titles
-	// would be one request per partial thread spent on output that has no
-	// thread level at all. It is unexported because it is not a user's choice:
-	// every command that shows threads shows their titles.
+	// skipThreadTitles suppresses the head-message fetch for output that has no
+	// thread header to put a title in: `chat spaces --unread` prints one line
+	// per space, `--group flat` and `--output table` one line per message. All
+	// three would otherwise spend a request per partial thread on a label they
+	// discard. It is unexported because it is not a user's choice but a
+	// consequence of the output they picked — see showsThreadTitles in cmd.go.
 	skipThreadTitles bool
 }
 
@@ -685,8 +686,10 @@ func (e *Engine) resolveNames(ctx context.Context, scans []spaceScan) {
 }
 
 // applyLimit keeps the newest limit messages across every space. Cutting before
-// grouping means counts, thread labels, and partial flags are all computed on
-// exactly what will be displayed.
+// grouping means counts and partial flags are computed on exactly what will be
+// displayed. Thread labels are not: a limit that cuts away a thread's opening
+// message makes the thread partial, and resolveThreadTitles then fetches back
+// the message the cut discarded, so the label still names whoever started it.
 func applyLimit(scans []spaceScan, limit int) []spaceScan {
 	if limit <= 0 {
 		return scans

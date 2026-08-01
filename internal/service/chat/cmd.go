@@ -179,6 +179,27 @@ func accountIndex(d *service.Deps) string {
 	return "0"
 }
 
+// showsThreadTitles reports whether the chosen output has a thread header to put
+// a title in. A title costs one request per thread whose opening message the
+// scan missed, so an output with no thread level should not pay for it — the
+// same reasoning as `chat spaces --unread`, which skips them in Engine.Spaces.
+//
+// JSON always carries thread.title, whatever the grouping. The table flattens to
+// one row per message and shows the short thread ID. The text renderer heads
+// each thread with its label unless --group flat put every message on a single
+// timeline, which also shows only the ID.
+func showsThreadTitles(d *service.Deps, f *queryFlags) bool {
+	if d.OutputExplicit {
+		switch d.OutputFormat {
+		case "json":
+			return true
+		case "table":
+			return false
+		}
+	}
+	return f.group != "flat"
+}
+
 func renderOpts(cmd *cobra.Command, group string, showLinks bool) RenderOpts {
 	tty := isTerminal(cmd.OutOrStdout())
 	return RenderOpts{Group: group, Color: tty, Hyperlinks: tty, ShowLinks: showLinks}
@@ -228,6 +249,7 @@ func runQuery(cmd *cobra.Command, d *service.Deps, f *queryFlags, adjust func(*Q
 	if adjust != nil {
 		adjust(&q)
 	}
+	q.skipThreadTitles = !showsThreadTitles(d, f)
 	// Scanning every space for mentions is the most expensive thing this tool
 	// does; say so while it happens.
 	if q.MentionsMe && q.Space == "" {
