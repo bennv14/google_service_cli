@@ -133,3 +133,71 @@ func TestEachRunRefetchesTheHead(t *testing.T) {
 		t.Fatalf("GetMessage called %d times across two runs, want 2", got)
 	}
 }
+
+func TestHeadSenderIsResolvedThroughTheDirectory(t *testing.T) {
+	// The Chat API leaves displayName empty for a human caller, so both the
+	// reply's sender and the head's arrive as raw users/… IDs.
+	api := titleAPI(t,
+		rawMsg("spaces/A/messages/t1.t9", "spaces/A/threads/t1", "users/2", "", "which server?", "2026-07-25T09:05:00Z"),
+	)
+	api.getMessage = func(name string) (*chatapi.Message, error) {
+		return rawMsg(name, "spaces/A/threads/t1", "users/1", "", "Friday deploy plan", "2026-07-20T09:00:00Z"), nil
+	}
+	dir := &fakeDirectory{people: map[string]Person{
+		"users/1": {Name: "Linh Tran"},
+		"users/2": {Name: "Huy Nguyen"},
+	}}
+
+	res := titleRun(t, api, dir)
+
+	if got := res.Spaces[0].Threads[0].Thread.HeadSender; got != "Linh Tran" {
+		t.Fatalf("head sender = %q, want the resolved name", got)
+	}
+	// One lookup for the scanned senders, one for the senders the heads
+	// introduced. Two, never one per head.
+	if dir.calls != 2 {
+		t.Fatalf("directory calls = %d, want 2", dir.calls)
+	}
+}
+
+func TestHeadSendersAreLookedUpOnceForAllThreads(t *testing.T) {
+	api := titleAPI(t,
+		rawMsg("spaces/A/messages/t1.t9", "spaces/A/threads/t1", "users/2", "", "one", "2026-07-25T09:05:00Z"),
+		rawMsg("spaces/A/messages/t2.t9", "spaces/A/threads/t2", "users/2", "", "two", "2026-07-25T09:06:00Z"),
+	)
+	// Both threads were opened by the same person.
+	api.getMessage = func(name string) (*chatapi.Message, error) {
+		return rawMsg(name, "", "users/1", "", "Friday deploy plan", "2026-07-20T09:00:00Z"), nil
+	}
+	dir := &fakeDirectory{people: map[string]Person{"users/1": {Name: "Linh Tran"}}}
+
+	res := titleRun(t, api, dir)
+
+	// users/2 from the scan, then users/1 once for both heads.
+	if len(dir.asked) != 2 || dir.asked[0] != "users/2" || dir.asked[1] != "users/1" {
+		t.Fatalf("directory was asked for %v, want [users/2 users/1]", dir.asked)
+	}
+	for _, tg := range res.Spaces[0].Threads {
+		if tg.Thread.HeadSender != "Linh Tran" {
+			t.Fatalf("thread %s head sender = %q", tg.Thread.ID, tg.Thread.HeadSender)
+		}
+	}
+}
+
+func TestUnresolvedHeadSenderKeepsItsRawID(t *testing.T) {
+	api := titleAPI(t,
+		rawMsg("spaces/A/messages/t1.t9", "spaces/A/threads/t1", "users/2", "Huy", "one", "2026-07-25T09:05:00Z"),
+	)
+	api.getMessage = func(name string) (*chatapi.Message, error) {
+		return rawMsg(name, "", "users/1", "", "Friday deploy plan", "2026-07-20T09:00:00Z"), nil
+	}
+
+	res := titleRun(t, api, &fakeDirectory{}) // resolves nobody
+
+	if got := res.Spaces[0].Threads[0].Thread.HeadSender; got != "users/1" {
+		t.Fatalf("head sender = %q, want the raw ID; an unknown name is not a failure", got)
+	}
+	if got := res.Spaces[0].Threads[0].Thread.Title; got != "Friday deploy plan" {
+		t.Fatalf("title = %q, want it regardless of the sender's name", got)
+	}
+}

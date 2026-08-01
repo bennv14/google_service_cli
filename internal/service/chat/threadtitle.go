@@ -2,6 +2,7 @@ package chat
 
 import (
 	"context"
+	"sort"
 	"sync"
 	"time"
 
@@ -45,6 +46,9 @@ func (e *Engine) resolveThreadTitles(ctx context.Context, groups []SpaceGroup) {
 		return
 	}
 
+	// A head the scan never saw usually introduces a sender the scan never
+	// saw either, so their names are collected and resolved together.
+	pending := map[string][]*ThreadInfo{}
 	for i, m := range e.fetchHeads(ctx, refs) {
 		if m == nil {
 			continue
@@ -58,6 +62,39 @@ func (e *Engine) resolveThreadTitles(ctx context.Context, groups []SpaceGroup) {
 		th := &groups[refs[i].group].Threads[refs[i].thread].Thread
 		th.Title = mi.Text
 		th.HeadSender = mi.Sender.Name
+		if id := mi.Sender.ID; id != "" {
+			pending[id] = append(pending[id], th)
+		}
+	}
+	e.nameHeads(ctx, pending)
+}
+
+// nameHeads turns the raw users/… IDs the fetched heads carried into people, in
+// one lookup however many threads there are. This reuses the people cache;
+// only message caching is off the table. A name we fail to learn leaves the raw
+// ID in place, exactly as resolveNames does — an unknown name is not a failure.
+func (e *Engine) nameHeads(ctx context.Context, pending map[string][]*ThreadInfo) {
+	if len(pending) == 0 {
+		return
+	}
+	ids := make([]string, 0, len(pending))
+	for id := range pending {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids) // map order is random; the request must not be
+
+	people, err := e.dir.Lookup(ctx, ids)
+	if err != nil {
+		e.warn(nameWarning(err))
+	}
+	for id, threads := range pending {
+		p, ok := people[id]
+		if !ok || p.Name == "" {
+			continue
+		}
+		for _, th := range threads {
+			th.HeadSender = p.Name
+		}
 	}
 }
 
