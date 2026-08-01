@@ -294,3 +294,80 @@ func TestTextThreadWithNoMessagesHasNoDanglingConnector(t *testing.T) {
 		t.Fatalf("a thread with no messages must not print a dangling connector:\n%q", buf.String())
 	}
 }
+
+func TestThreadLabelPrefersTheTitle(t *testing.T) {
+	// The only message in hand is a mid-thread reply. Labelling with it would
+	// credit Huy with starting a thread Linh started.
+	tg := ThreadGroup{
+		Thread: ThreadInfo{
+			ID:    "spaces/A/threads/t2",
+			Title: "Friday deploy plan", HeadSender: "Linh Tran", Partial: true,
+		},
+		Messages: []MessageInfo{
+			{ID: "spaces/A/messages/t2.zz", CreateTime: at(t, "15:40"),
+				Sender: Sender{Name: "Huy"}, Text: "down"},
+		},
+	}
+	want := `Linh Tran · "Friday deploy plan"`
+	if got := threadLabel(tg); got != want {
+		t.Fatalf("threadLabel = %q, want %q", got, want)
+	}
+}
+
+func TestThreadLabelWithoutATitleIsUnchanged(t *testing.T) {
+	tg := ThreadGroup{
+		Thread: ThreadInfo{ID: "spaces/A/threads/t2"},
+		Messages: []MessageInfo{
+			{ID: "spaces/A/messages/t2.zz", CreateTime: at(t, "15:40"),
+				Sender: Sender{Name: "Huy"}, Text: "down"},
+		},
+	}
+	want := `Huy · "down"`
+	if got := threadLabel(tg); got != want {
+		t.Fatalf("threadLabel = %q, want %q", got, want)
+	}
+}
+
+func TestThreadLabelWithNoSenderIsJustTheQuote(t *testing.T) {
+	tg := ThreadGroup{Thread: ThreadInfo{ID: "spaces/A/threads/t2", Title: "Friday deploy plan"}}
+	want := `"Friday deploy plan"`
+	if got := threadLabel(tg); got != want {
+		t.Fatalf("threadLabel = %q, want %q", got, want)
+	}
+}
+
+func TestThreadLabelTruncatesALongTitle(t *testing.T) {
+	// The title is stored verbatim; truncation is the renderer's business.
+	long := strings.Repeat("a", excerptWidth+10)
+	tg := ThreadGroup{Thread: ThreadInfo{
+		ID: "spaces/A/threads/t2", Title: long, HeadSender: "Linh Tran",
+	}}
+	want := `Linh Tran · "` + strings.Repeat("a", excerptWidth) + `…"`
+	if got := threadLabel(tg); got != want {
+		t.Fatalf("threadLabel = %q, want %q", got, want)
+	}
+}
+
+func TestThreadLabelCollapsesAMultiLineTitle(t *testing.T) {
+	tg := ThreadGroup{Thread: ThreadInfo{
+		ID: "spaces/A/threads/t2", Title: "Friday\n  deploy\tplan", HeadSender: "Linh Tran",
+	}}
+	want := `Linh Tran · "Friday deploy plan"`
+	if got := threadLabel(tg); got != want {
+		t.Fatalf("threadLabel = %q, want %q", got, want)
+	}
+}
+
+func TestTextTreeShowsTheThreadTitle(t *testing.T) {
+	r := threadedResult(t)
+	r.Spaces[0].Threads[1].Thread.Title = "Friday deploy plan"
+	r.Spaces[0].Threads[1].Thread.HeadSender = "Linh Tran"
+
+	var buf bytes.Buffer
+	if err := r.Text(&buf); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(buf.String(), `Linh Tran · "Friday deploy plan"`) {
+		t.Fatalf("the thread header does not carry the title:\n%s", buf.String())
+	}
+}
