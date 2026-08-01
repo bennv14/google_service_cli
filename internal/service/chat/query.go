@@ -254,6 +254,13 @@ type Query struct {
 	AccountIndex string    // browser account index used in space links
 	Now          time.Time // injected by tests; zero means time.Now()
 	Progress     io.Writer // progress ticks for expensive scans; nil = quiet
+
+	// skipThreadTitles suppresses the head-message fetch. `chat spaces
+	// --unread` runs a full scan but prints one line per space, so titles
+	// would be one request per partial thread spent on output that has no
+	// thread level at all. It is unexported because it is not a user's choice:
+	// every command that shows threads shows their titles.
+	skipThreadTitles bool
 }
 
 // Run executes the query. A failure that affects a single space is collected
@@ -310,7 +317,9 @@ func (e *Engine) Run(ctx context.Context, q Query) (Result, error) {
 	groups = applyThreadLimit(groups, q.ThreadLimit)
 	// After the thread limit, so threads that were cut cost nothing; before
 	// saveNames, so the names learned from head senders are persisted.
-	e.resolveThreadTitles(ctx, groups)
+	if !q.skipThreadTitles {
+		e.resolveThreadTitles(ctx, groups)
+	}
 	recount(groups)
 	e.saveNames()
 
@@ -1026,6 +1035,7 @@ launch:
 // unread messages, annotated with the count.
 func (e *Engine) Spaces(ctx context.Context, q Query) (SpaceList, error) {
 	if q.UnreadOnly {
+		q.skipThreadTitles = true // this output has no thread level
 		res, err := e.Run(ctx, q)
 		if err != nil {
 			return SpaceList{}, err

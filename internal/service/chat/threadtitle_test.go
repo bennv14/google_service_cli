@@ -302,3 +302,22 @@ func TestCancelledContextStopsHeadFetching(t *testing.T) {
 		}
 	}
 }
+
+func TestSpacesUnreadDoesNotFetchThreadTitles(t *testing.T) {
+	api := titleAPI(t,
+		rawMsg("spaces/A/messages/t1.t9", "spaces/A/threads/t1", "users/2", "Huy", "which server?", "2026-07-25T09:05:00Z"),
+	)
+	api.readState = readStateFor(map[string]string{"spaces/A": "2026-07-25T00:00:00Z"})
+
+	list, err := NewEngine(api, &fakeDirectory{}).Spaces(context.Background(),
+		Query{UnreadOnly: true, Now: fixedTime(t, "2026-07-26T00:00:00Z")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list.Spaces) != 1 || list.Spaces[0].UnreadCount != 1 {
+		t.Fatalf("spaces = %+v", list.Spaces)
+	}
+	if n := api.getMessageCalls(); n != 0 {
+		t.Fatalf("GetMessage called %d times; `chat spaces` prints no thread level", n)
+	}
+}
