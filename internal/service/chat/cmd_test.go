@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/spf13/cobra"
+	chatapi "google.golang.org/api/chat/v1"
 	"google.golang.org/api/option"
 
 	"github.com/bennv14/google_service_cli/internal/config"
@@ -320,6 +321,60 @@ func TestChatRejectsBadTimeAndGroup(t *testing.T) {
 	cmd.SetErr(new(bytes.Buffer))
 	if err := cmd.ExecuteContext(context.Background()); err == nil {
 		t.Error("expected --group sideways to be rejected")
+	}
+}
+
+func TestShowsThreadTitlesFollowsTheChosenOutput(t *testing.T) {
+	// A title costs a request per thread whose opening message the scan missed,
+	// so only the outputs that actually print one should ask for it.
+	cases := []struct {
+		name     string
+		format   string
+		explicit bool
+		group    string
+		want     bool
+	}{
+		{"default output is chat's text tree", "table", false, "", true},
+		{"--group flat has no thread header", "table", false, "flat", false},
+		{"--group space keeps the header", "table", false, "space", true},
+		{"--group thread keeps the header", "table", false, "thread", true},
+		{"-o table shows the thread ID, not a label", "table", true, "", false},
+		{"-o table stays off whatever the grouping", "table", true, "space", false},
+		{"-o json always carries thread.title", "json", true, "", true},
+		{"-o json carries it even under --group flat", "json", true, "flat", true},
+		{"-o text is the tree again", "text", true, "", true},
+		{"-o text obeys --group flat", "text", true, "flat", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			d := &service.Deps{OutputFormat: c.format, OutputExplicit: c.explicit}
+			if got := showsThreadTitles(d, &queryFlags{group: c.group}); got != c.want {
+				t.Fatalf("showsThreadTitles(%q, explicit=%v, --group %q) = %v, want %v",
+					c.format, c.explicit, c.group, got, c.want)
+			}
+		})
+	}
+}
+
+func TestSkipThreadTitlesSuppressesTheFetch(t *testing.T) {
+	// The other half of the decision: the engine must honour it. Only a reply is
+	// in hand, so this thread would otherwise cost one GetMessage.
+	api := titleAPI(t,
+		rawMsg("spaces/A/messages/t1.t9", "spaces/A/threads/t1", "users/2", "Huy", "which server?", "2026-07-25T09:05:00Z"),
+	)
+	api.getMessage = func(name string) (*chatapi.Message, error) {
+		t.Fatalf("unexpected GetMessage(%q): this output has no thread header", name)
+		return nil, nil
+	}
+
+	res, err := NewEngine(api, &fakeDirectory{}).Run(context.Background(), Query{
+		Now: fixedTime(t, "2026-07-26T00:00:00Z"), skipThreadTitles: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := res.Spaces[0].Threads[0].Thread.Title; got != "" {
+		t.Fatalf("title = %q, want none", got)
 	}
 }
 
