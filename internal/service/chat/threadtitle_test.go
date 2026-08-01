@@ -68,3 +68,68 @@ func TestTitleIsInJSONAndTheHeadSenderIsNot(t *testing.T) {
 		t.Fatalf("HeadSender must never reach JSON:\n%s", got)
 	}
 }
+
+func TestMissingHeadIsFetchedByItsDerivedName(t *testing.T) {
+	// Only a reply is in hand: this is what `chat mentions` sees, because the
+	// head almost never mentions you.
+	api := titleAPI(t,
+		rawMsg("spaces/A/messages/t1.t9", "spaces/A/threads/t1", "users/2", "Huy", "which server?", "2026-07-25T09:05:00Z"),
+	)
+	api.getMessage = func(name string) (*chatapi.Message, error) {
+		return rawMsg(name, "spaces/A/threads/t1", "users/1", "Linh", "Friday deploy plan", "2026-07-20T09:00:00Z"), nil
+	}
+
+	res := titleRun(t, api, &fakeDirectory{})
+
+	// spaces/A/threads/t1 → spaces/A/messages/t1.t1
+	if got := api.getMessageNames(); len(got) != 1 || got[0] != "spaces/A/messages/t1.t1" {
+		t.Fatalf("GetMessage names = %v, want exactly [spaces/A/messages/t1.t1]", got)
+	}
+	th := res.Spaces[0].Threads[0].Thread
+	if th.Title != "Friday deploy plan" {
+		t.Fatalf("title = %q, want the fetched head's text", th.Title)
+	}
+	if th.HeadSender != "Linh" {
+		t.Fatalf("head sender = %q, want Linh", th.HeadSender)
+	}
+	if !th.Partial {
+		t.Fatal("a thread whose head was outside the window is still partial")
+	}
+}
+
+func TestUnparseableThreadIDIssuesNoRequest(t *testing.T) {
+	// A message name that breaks the {tid}.{mid} convention forms its own
+	// thread keyed by that raw name, from which no head name can be derived.
+	api := titleAPI(t,
+		rawMsg("spaces/A/messages/weird", "", "users/2", "Huy", "orphan", "2026-07-25T09:05:00Z"),
+	)
+	res := titleRun(t, api, &fakeDirectory{})
+
+	if n := api.getMessageCalls(); n != 0 {
+		t.Fatalf("GetMessage called %d times for a thread ID that cannot be parsed", n)
+	}
+	if got := res.Spaces[0].Threads[0].Thread.Title; got != "" {
+		t.Fatalf("title = %q, want none", got)
+	}
+}
+
+func TestEachRunRefetchesTheHead(t *testing.T) {
+	// Titles are never cached: a second run must pay for them again. One
+	// Engine is reused deliberately — a fresh Engine would prove nothing about
+	// state the first run might have kept.
+	api := titleAPI(t,
+		rawMsg("spaces/A/messages/t1.t9", "spaces/A/threads/t1", "users/2", "Huy", "which server?", "2026-07-25T09:05:00Z"),
+	)
+	api.getMessage = func(name string) (*chatapi.Message, error) {
+		return rawMsg(name, "spaces/A/threads/t1", "users/1", "Linh", "Friday deploy plan", "2026-07-20T09:00:00Z"), nil
+	}
+	e := NewEngine(api, &fakeDirectory{})
+	for i := 0; i < 2; i++ {
+		if _, err := e.Run(context.Background(), Query{Now: fixedTime(t, "2026-07-26T00:00:00Z")}); err != nil {
+			t.Fatalf("run %d: %v", i+1, err)
+		}
+	}
+	if got := api.getMessageCalls(); got != 2 {
+		t.Fatalf("GetMessage called %d times across two runs, want 2", got)
+	}
+}
