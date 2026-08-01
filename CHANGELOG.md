@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v2.0.4] - 2026-08-01
+
 ### Added
 
 - Thread titles. `gsvc chat` now labels each thread it heads with its opening
@@ -163,7 +165,8 @@ First release.
 - Global flags: `--profile`, `--output`/`-o`, `--verbose`.
 - Build-time version injection surfaced by `gsvc version`.
 
-[Unreleased]: https://github.com/bennv14/google_service_cli/compare/v2.0.3...HEAD
+[Unreleased]: https://github.com/bennv14/google_service_cli/compare/v2.0.4...HEAD
+[v2.0.4]: https://github.com/bennv14/google_service_cli/compare/v2.0.3...v2.0.4
 [v2.0.3]: https://github.com/bennv14/google_service_cli/compare/v2.0.2...v2.0.3
 [v2.0.2]: https://github.com/bennv14/google_service_cli/compare/v2.0.1...v2.0.2
 [v2.0.1]: https://github.com/bennv14/google_service_cli/compare/v2.0.0...v2.0.1
