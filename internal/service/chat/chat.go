@@ -203,3 +203,11 @@ func (c *Client) LatestMessages(ctx context.Context, parent string, n int) ([]*c
 	}
 	return res.Messages, nil
 }
+
+// GetMessage fetches one message by resource name
+// ("spaces/{sid}/messages/{tid}.{mid}"). It reuses messageFields so the result
+// converts through messageInfo() exactly like a listed message would. The Chat
+// API has no batch-get, so N messages cost N requests.
+func (c *Client) GetMessage(ctx context.Context, name string) (*chatapi.Message, error) {
+	return c.svc.Spaces.Messages.Get(name).Context(ctx).Fields(messageFields).Do()
+}

@@ -104,6 +104,9 @@ type fakeAPI struct {
 	messages   func(parent string, o ListOpts) ([]*chatapi.Message, error)
 	latest     func(parent string, n int) ([]*chatapi.Message, error)
 	readState  func(spaceName string) (string, time.Time, error)
+	getMessage func(name string) (*chatapi.Message, error)
+	msgMu      sync.Mutex
+	gotHeads   []string
 	listErr    error
 	listCalls  int32
 	msgFilters sync.Map // parent -> filter, for asserting per-space filters
@@ -169,6 +172,33 @@ func (f *fakeAPI) SpaceReadState(_ context.Context, spaceName string) (string, t
 	}
 	return f.readState(spaceName)
 }
+
+// GetMessage records every head fetch. Unlike the other hooks, a nil hook is
+// not a test failure: once thread titles exist, any Run whose scan missed a
+// thread's opening message legitimately fetches it. The default answer is a
+// message with no text, which yields no title and no warning — so tests
+// written before titles existed keep the assertions they already had.
+func (f *fakeAPI) GetMessage(_ context.Context, name string) (*chatapi.Message, error) {
+	f.msgMu.Lock()
+	f.gotHeads = append(f.gotHeads, name)
+	hook := f.getMessage
+	f.msgMu.Unlock()
+	if hook == nil {
+		return &chatapi.Message{Name: name, CreateTime: "2026-07-01T00:00:00Z"}, nil
+	}
+	return hook(name)
+}
+
+// getMessageNames returns the head messages fetched so far. The fetches run
+// concurrently, so the order is not meaningful beyond a single call — sort
+// before comparing more than one name.
+func (f *fakeAPI) getMessageNames() []string {
+	f.msgMu.Lock()
+	defer f.msgMu.Unlock()
+	return append([]string(nil), f.gotHeads...)
+}
+
+func (f *fakeAPI) getMessageCalls() int { return len(f.getMessageNames()) }
 
 // meUser is the caller's own ID in every engine test.
 const meUser = "users/114427003"

@@ -379,3 +379,34 @@ func TestLatestMessagesAsksForNewestFirst(t *testing.T) {
 		t.Fatalf("LatestMessages = %+v", msgs)
 	}
 }
+
+func TestGetMessageFetchesOneMessageWithTheListFieldMask(t *testing.T) {
+	var gotFields string
+	cl := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/spaces/A/messages/t1.t1" {
+			http.NotFound(w, r)
+			return
+		}
+		gotFields = r.URL.Query().Get("fields")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"name":       "spaces/A/messages/t1.t1",
+			"createTime": "2026-07-20T09:00:00Z",
+			"text":       "Friday deploy plan",
+			"thread":     map[string]any{"name": "spaces/A/threads/t1"},
+			"sender":     map[string]any{"name": "users/1", "type": "HUMAN"},
+		})
+	})
+
+	m, err := cl.GetMessage(context.Background(), "spaces/A/messages/t1.t1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.Text != "Friday deploy plan" {
+		t.Fatalf("GetMessage = %+v", m)
+	}
+	// The same mask as messages.list, so the head converts through
+	// messageInfo() with no special case.
+	if gotFields != messageFields {
+		t.Fatalf("fields = %q, want %q", gotFields, messageFields)
+	}
+}
