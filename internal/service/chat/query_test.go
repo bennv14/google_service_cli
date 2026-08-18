@@ -3,6 +3,7 @@ package chat
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -1207,4 +1208,92 @@ func TestSpaceNameIgnoresUnresolvedUserIDs(t *testing.T) {
 		t.Fatalf("spaceName() = %q, want %q", got, "Alice Smith")
 	}
 }
+
+func TestMessageInfoExtractsAttachments(t *testing.T) {
+	m := &chatapi.Message{
+		Name:       "spaces/AAAA/messages/t1.m1",
+		CreateTime: "2026-08-19T12:00:00Z",
+		Text:       "Here are files",
+		Attachment: []*chatapi.Attachment{
+			{
+				Name:        "spaces/AAAA/messages/t1.m1/attachments/att1",
+				ContentName: "spec.pdf",
+				ContentType: "application/pdf",
+				Source:      "UPLOADED_CONTENT",
+				AttachmentDataRef: &chatapi.AttachmentDataRef{
+					ResourceName: "spaces/AAAA/messages/t1.m1/attachments/att1/media",
+				},
+				DownloadUri: "https://chat.google.com/download/spec.pdf",
+			},
+			{
+				Name:        "spaces/AAAA/messages/t1.m1/attachments/att2",
+				ContentName: "sheet.xlsx",
+				ContentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+				Source:      "DRIVE_FILE",
+				DriveDataRef: &chatapi.DriveDataRef{
+					DriveFileId: "drive-file-123",
+				},
+			},
+		},
+	}
+
+	mi, ok := messageInfo(m, time.Time{}, false, "")
+	if !ok {
+		t.Fatal("messageInfo returned ok=false")
+	}
+	if mi.ID != "AAAA/t1/m1" {
+		t.Errorf("mi.ID = %q, want AAAA/t1/m1", mi.ID)
+	}
+	if mi.RawName != "spaces/AAAA/messages/t1.m1" {
+		t.Errorf("mi.RawName = %q, want spaces/AAAA/messages/t1.m1", mi.RawName)
+	}
+	if len(mi.Attachments) != 2 {
+		t.Fatalf("len(mi.Attachments) = %d, want 2", len(mi.Attachments))
+	}
+	att1 := mi.Attachments[0]
+	if att1.ContentName != "spec.pdf" || att1.Source != "UPLOADED_CONTENT" || att1.ResourceName != "spaces/AAAA/messages/t1.m1/attachments/att1/media" {
+		t.Errorf("unexpected att1: %+v", att1)
+	}
+	att2 := mi.Attachments[1]
+	if att2.ContentName != "sheet.xlsx" || att2.Source != "DRIVE_FILE" || att2.DriveFileID != "drive-file-123" {
+		t.Errorf("unexpected att2: %+v", att2)
+	}
+}
+
+func TestEngineMessageFetchesAndResolvesSingleMessage(t *testing.T) {
+	api := &fakeAPI{
+		getMessage: func(name string) (*chatapi.Message, error) {
+			if name != "spaces/AAAA/messages/t1.m1" {
+				return nil, fmt.Errorf("not found: %s", name)
+			}
+			return &chatapi.Message{
+				Name:       "spaces/AAAA/messages/t1.m1",
+				CreateTime: "2026-08-19T12:00:00Z",
+				Text:       "Single msg test",
+				Sender:     &chatapi.User{Name: "users/101", DisplayName: "Short Name", Type: "HUMAN"},
+			}, nil
+		},
+	}
+	dir := &fakeDirectory{
+		people: map[string]Person{
+			"users/101": {Name: "Full Resolved Name", Email: "person@example.com"},
+		},
+	}
+
+	eng := NewEngine(api, dir)
+	sm, err := eng.Message(context.Background(), "spaces/AAAA/messages/t1.m1", "0")
+	if err != nil {
+		t.Fatalf("Engine.Message error: %v", err)
+	}
+	if sm.Message.ID != "AAAA/t1/m1" {
+		t.Errorf("sm.Message.ID = %q, want AAAA/t1/m1", sm.Message.ID)
+	}
+	if sm.Message.Sender.Name != "Full Resolved Name" {
+		t.Errorf("sender name = %q, want Full Resolved Name", sm.Message.Sender.Name)
+	}
+	if sm.Message.Sender.Email != "person@example.com" {
+		t.Errorf("sender email = %q, want person@example.com", sm.Message.Sender.Email)
+	}
+}
+
 

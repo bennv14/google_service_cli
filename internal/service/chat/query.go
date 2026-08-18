@@ -593,6 +593,34 @@ func convert(raw []*chatapi.Message, lastRead time.Time, readKnown bool, meID st
 	return out
 }
 
+// attachmentInfos converts Chat API attachments into view AttachmentInfo structs.
+func attachmentInfos(atts []*chatapi.Attachment) []AttachmentInfo {
+	if len(atts) == 0 {
+		return nil
+	}
+	out := make([]AttachmentInfo, 0, len(atts))
+	for _, a := range atts {
+		if a == nil {
+			continue
+		}
+		info := AttachmentInfo{
+			Name:        a.Name,
+			ContentName: a.ContentName,
+			ContentType: a.ContentType,
+			Source:      a.Source,
+			DownloadURI: a.DownloadUri,
+		}
+		if a.AttachmentDataRef != nil {
+			info.ResourceName = a.AttachmentDataRef.ResourceName
+		}
+		if a.DriveDataRef != nil {
+			info.DriveFileID = a.DriveDataRef.DriveFileId
+		}
+		out = append(out, info)
+	}
+	return out
+}
+
 // messageInfo converts one API message. ok is false for a message that cannot
 // be placed in time, which makes it impossible to sort or filter.
 func messageInfo(m *chatapi.Message, lastRead time.Time, readKnown bool, meID string) (MessageInfo, bool) {
@@ -602,13 +630,15 @@ func messageInfo(m *chatapi.Message, lastRead time.Time, readKnown bool, meID st
 	}
 	head, _ := isThreadHead(m.Name)
 	mi := MessageInfo{
-		ID:           m.Name,
+		ID:           formatMessageID(m.Name),
+		RawName:      m.Name,
 		ThreadID:     threadIDOf(m),
 		IsThreadHead: head,
 		CreateTime:   ts.Local(),
 		Text:         m.Text,
 		Mentions:     []string{},
 		Link:         messageLink(m.Name),
+		Attachments:  attachmentInfos(m.Attachment),
 	}
 	if m.Sender != nil {
 		mi.Sender = Sender{
@@ -817,7 +847,11 @@ func isPartial(ms []MessageInfo, since time.Time) bool {
 		if m.IsThreadHead {
 			return false
 		}
-		if _, _, _, ok := splitMessageName(m.ID); ok {
+		name := m.RawName
+		if name == "" {
+			name = m.ID
+		}
+		if _, _, _, ok := splitMessageName(name); ok {
 			parseable = true
 		}
 	}
@@ -1080,3 +1114,39 @@ func (e *Engine) Spaces(ctx context.Context, q Query) (SpaceList, error) {
 	e.saveNames()
 	return out, nil
 }
+
+// Message fetches a single message by canonical resource name, converts it to
+// MessageInfo, and resolves the author's display name and email.
+func (e *Engine) Message(ctx context.Context, name, accountIndex string) (SingleMessage, error) {
+	m, err := e.api.GetMessage(ctx, name)
+	if err != nil {
+		return SingleMessage{}, err
+	}
+	meID, _ := e.userID(ctx, name)
+	mi, ok := messageInfo(m, time.Time{}, false, meID)
+	if !ok {
+		return SingleMessage{}, fmt.Errorf("malformed message create time in message %s", name)
+	}
+
+	if e.dir != nil && mi.Sender.ID != "" {
+		resolved, err := e.dir.Lookup(ctx, []string{mi.Sender.ID})
+		if err != nil {
+			e.warn(nameWarning(err))
+		}
+		if p, ok := resolved[mi.Sender.ID]; ok {
+			if p.Name != "" {
+				mi.Sender.Name = p.Name
+			}
+			if p.Email != "" {
+				mi.Sender.Email = p.Email
+			}
+		}
+	}
+	e.saveNames()
+
+	return SingleMessage{
+		Message:  mi,
+		Warnings: e.warnings(),
+	}, nil
+}
+
