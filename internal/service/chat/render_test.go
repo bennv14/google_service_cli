@@ -375,3 +375,61 @@ func TestTextTreeShowsTheThreadTitle(t *testing.T) {
 		t.Fatalf("the thread header does not carry the title:\n%s", buf.String())
 	}
 }
+
+func TestRenderMessagesWithAttachments(t *testing.T) {
+	var buf bytes.Buffer
+	msgs := []MessageInfo{
+		{
+			CreateTime: at(t, "10:30"),
+			Sender:     Sender{Name: "Nguyen Van A"},
+			Text:       "Check out proposal.",
+			Attachments: []AttachmentInfo{
+				{ContentName: "proposal.pdf", ContentType: "application/pdf"},
+				{ContentName: "arch.png", ContentType: "image/png", DownloadURI: "https://chat.google.com/download/arch.png"},
+			},
+		},
+	}
+
+	renderMessages(&buf, msgs, "", RenderOpts{})
+	want := "" +
+		"└ 10:30  Nguyen Van A\n" +
+		"         Check out proposal.\n" +
+		"         📎 proposal.pdf (application/pdf)\n" +
+		"         📎 arch.png (image/png)\n"
+	if buf.String() != want {
+		t.Fatalf("renderMessages mismatch\n--- got ---\n%s\n--- want ---\n%s", buf.String(), want)
+	}
+
+	// Test with ShowLinks = true
+	buf.Reset()
+	renderMessages(&buf, msgs, "", RenderOpts{ShowLinks: true})
+	if !strings.Contains(buf.String(), "https://chat.google.com/download/arch.png") {
+		t.Fatalf("ShowLinks did not print attachment download URI:\n%s", buf.String())
+	}
+}
+
+func TestSingleMessageText(t *testing.T) {
+	sm := SingleMessage{
+		Message: MessageInfo{
+			CreateTime: at(t, "14:15"),
+			Sender:     Sender{Name: "Linh Tran"},
+			Text:       "Single message text output",
+			Attachments: []AttachmentInfo{
+				{ContentName: "doc.docx", ContentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document"},
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := sm.Text(&buf); err != nil {
+		t.Fatal(err)
+	}
+	want := "" +
+		"└ 14:15  Linh Tran\n" +
+		"         Single message text output\n" +
+		"         📎 doc.docx (application/vnd.openxmlformats-officedocument.wordprocessingml.document)\n"
+	if buf.String() != want {
+		t.Fatalf("SingleMessage.Text mismatch\n--- got ---\n%s\n--- want ---\n%s", buf.String(), want)
+	}
+}
+
