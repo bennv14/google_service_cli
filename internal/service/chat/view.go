@@ -32,19 +32,32 @@ type Sender struct {
 	IsMe  bool   `json:"isMe"`
 }
 
+// AttachmentInfo describes a file or asset attached to a message.
+type AttachmentInfo struct {
+	Name         string `json:"name"`                   // spaces/{sid}/messages/{mid}/attachments/{aid}
+	ContentName  string `json:"contentName"`            // e.g. "report.pdf", "image.png"
+	ContentType  string `json:"contentType"`            // MIME type, e.g. "application/pdf"
+	Source       string `json:"source"`                 // "UPLOADED_CONTENT" | "DRIVE_FILE"
+	ResourceName string `json:"resourceName,omitempty"` // For Chat Media API download
+	DriveFileID  string `json:"driveFileId,omitempty"`  // For Drive API download
+	DownloadURI  string `json:"downloadUri,omitempty"`  // Browser download link
+}
+
 // MessageInfo is one message. ThreadID is carried for flat rendering and
 // grouping but stays out of JSON, where the thread level already holds it.
 type MessageInfo struct {
-	ID           string    `json:"id"`
-	ThreadID     string    `json:"-"`
-	IsThreadHead bool      `json:"isThreadHead"`
-	CreateTime   time.Time `json:"createTime"`
-	Sender       Sender    `json:"sender"`
-	Text         string    `json:"text"`
-	Mentions     []string  `json:"mentions"`
-	MentionsMe   bool      `json:"mentionsMe"`
-	Unread       bool      `json:"unread"`
-	Link         string    `json:"link,omitempty"`
+	ID           string           `json:"id"`
+	RawName      string           `json:"-"`
+	ThreadID     string           `json:"-"`
+	IsThreadHead bool             `json:"isThreadHead"`
+	CreateTime   time.Time        `json:"createTime"`
+	Sender       Sender           `json:"sender"`
+	Text         string           `json:"text"`
+	Mentions     []string         `json:"mentions"`
+	MentionsMe   bool             `json:"mentionsMe"`
+	Unread       bool             `json:"unread"`
+	Link         string           `json:"link,omitempty"`
+	Attachments  []AttachmentInfo `json:"attachments,omitempty"`
 }
 
 // ThreadInfo describes a thread. Partial means the thread's first message is
@@ -188,6 +201,39 @@ func (sl SpaceList) Rows() [][]string {
 		})
 	}
 	return rows
+}
+
+// SingleMessage is the output of `gsvc chat message <id>`.
+type SingleMessage struct {
+	Message  MessageInfo
+	Warnings []string
+	Opts     RenderOpts
+}
+
+func (sm SingleMessage) MarshalJSON() ([]byte, error) {
+	return json.Marshal(sm.Message)
+}
+
+func (sm SingleMessage) Headers() []string {
+	return []string{"TIME", "ID", "SENDER", "TEXT", "ATTACHMENTS"}
+}
+
+func (sm SingleMessage) Rows() [][]string {
+	attNames := make([]string, 0, len(sm.Message.Attachments))
+	for _, a := range sm.Message.Attachments {
+		name := a.ContentName
+		if name == "" {
+			name = shortID(a.Name)
+		}
+		attNames = append(attNames, name)
+	}
+	return [][]string{{
+		sm.Message.CreateTime.Format("2006-01-02 15:04"),
+		sm.Message.ID,
+		sm.Message.Sender.Name,
+		excerpt(oneLine(sm.Message.Text), 80),
+		strings.Join(attNames, ", "),
+	}}
 }
 
 // plural renders "1 space" / "2 spaces".
