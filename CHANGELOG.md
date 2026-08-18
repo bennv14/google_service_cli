@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Single message lookup: `gsvc chat message <messageId>` reads a single message
+  by ID, web URL, or resource name, with support for downloading attachments.
+- Standardized message ID format: `spaceId/threadId/messageId` across all outputs
+  for consistent identification and direct reuse in `gsvc chat message`.
+- Attachment display in terminal views: messages with uploaded files or Google
+  Drive attachments show attachment names, MIME types, and download links
+  (`📎 <name> (<type>)`).
+- Asset downloading: `gsvc chat message --download` automatically downloads
+  message attachments (supporting both Chat uploaded media via the Chat Media
+  API and Google Drive attachments via the Drive API), with `--output-dir` and
+  `--out` for custom destination paths.
+
 ## [v2.0.4] - 2026-08-01
 
 ### Added
