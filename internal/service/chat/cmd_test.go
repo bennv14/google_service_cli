@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -393,3 +394,354 @@ func TestChatMessagesShowsResolvedNames(t *testing.T) {
 		t.Fatalf("sender email was not resolved:\n%s", out.String())
 	}
 }
+
+func TestChatMessageCommandTextAndJSON(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/spaces/A/messages/t1.m1":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"name":       "spaces/A/messages/t1.m1",
+				"text":       "Single message content",
+				"createTime": "2026-07-25T09:12:00Z",
+				"thread":     map[string]any{"name": "spaces/A/threads/t1"},
+				"sender":     map[string]any{"name": "users/1", "displayName": "Linh", "type": "HUMAN"},
+				"attachment": []map[string]any{
+					{
+						"name":        "spaces/A/messages/t1.m1/attachments/att1",
+						"contentName": "notes.txt",
+						"contentType": "text/plain",
+						"source":      "UPLOADED_CONTENT",
+					},
+				},
+			})
+		case "/v1/people:batchGet":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"responses": []map[string]any{
+					{
+						"requestedResourceName": "people/1",
+						"person": map[string]any{
+							"names": []map[string]any{{"displayName": "Linh Tran"}},
+						},
+					},
+				},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	// Test Text output
+	var outText bytes.Buffer
+	cmd := New().Command(testDeps(t, srv, "text", false, &outText))
+	cmd.SetArgs([]string{"message", "A/t1/m1"})
+	cmd.SetErr(new(bytes.Buffer))
+	if err := cmd.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("cmd.ExecuteContext error: %v", err)
+	}
+	if !strings.Contains(outText.String(), "Single message content") {
+		t.Fatalf("text output missing content:\n%s", outText.String())
+	}
+	if !strings.Contains(outText.String(), "📎 notes.txt (text/plain)") {
+		t.Fatalf("text output missing attachment:\n%s", outText.String())
+	}
+
+	// Test JSON output
+	var outJSON bytes.Buffer
+	cmd = New().Command(testDeps(t, srv, "json", true, &outJSON))
+	cmd.SetArgs([]string{"message", "A/t1/m1"})
+	cmd.SetErr(new(bytes.Buffer))
+	if err := cmd.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("cmd.ExecuteContext error: %v", err)
+	}
+	var decoded MessageInfo
+	if err := json.Unmarshal(outJSON.Bytes(), &decoded); err != nil {
+		t.Fatalf("unmarshal error: %v\nJSON:\n%s", err, outJSON.String())
+	}
+	if decoded.ID != "A/t1/m1" || len(decoded.Attachments) != 1 || decoded.Attachments[0].ContentName != "notes.txt" {
+		t.Fatalf("unexpected decoded message: %+v", decoded)
+	}
+}
+
+func TestChatMessageDownloadFlag(t *testing.T) {
+	tmp := t.TempDir()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/spaces/A/messages/t1.m1":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"name":       "spaces/A/messages/t1.m1",
+				"text":       "Download test",
+				"createTime": "2026-07-25T09:12:00Z",
+				"sender":     map[string]any{"name": "users/1", "displayName": "Linh", "type": "HUMAN"},
+				"attachment": []map[string]any{
+					{
+						"name":        "spaces/A/messages/t1.m1/attachments/att1",
+						"contentName": "hello.txt",
+						"contentType": "text/plain",
+						"source":      "UPLOADED_CONTENT",
+						"attachmentDataRef": map[string]any{
+							"resourceName": "spaces/A/messages/t1.m1/attachments/att1/media",
+						},
+					},
+				},
+			})
+		case "/v1/media/spaces/A/messages/t1.m1/attachments/att1/media":
+			_, _ = w.Write([]byte("hello world"))
+		case "/v1/people:batchGet":
+			_ = json.NewEncoder(w).Encode(map[string]any{"responses": []any{}})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	var out bytes.Buffer
+	cmd := New().Command(testDeps(t, srv, "text", false, &out))
+	cmd.SetOut(&out)
+	cmd.SetArgs([]string{"message", "A/t1/m1", "--download", "--output-dir", tmp})
+	cmd.SetErr(new(bytes.Buffer))
+	if err := cmd.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("cmd.ExecuteContext error: %v", err)
+	}
+
+	downloadedFile := filepath.Join(tmp, "hello.txt")
+	content, err := os.ReadFile(downloadedFile)
+	if err != nil {
+		t.Fatalf("ReadFile error: %v", err)
+	}
+	if string(content) != "hello world" {
+		t.Errorf("content = %q, want hello world", string(content))
+	}
+	if !strings.Contains(out.String(), "Downloaded hello.txt") {
+		t.Errorf("stdout missing download confirmation:\n%s", out.String())
+	}
+}
+
+func TestChatMessageDownloadNoAttachmentsPrintsNotice(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/spaces/A/messages/t1.m1" {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"name":       "spaces/A/messages/t1.m1",
+				"text":       "No attachments here",
+				"createTime": "2026-07-25T09:12:00Z",
+				"sender":     map[string]any{"name": "users/1", "displayName": "Linh", "type": "HUMAN"},
+			})
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(srv.Close)
+
+	var errBuf bytes.Buffer
+	deps := testDeps(t, srv, "text", false, new(bytes.Buffer))
+	cmd := New().Command(deps)
+	cmd.SetArgs([]string{"message", "A/t1/m1", "--download"})
+	cmd.SetErr(&errBuf)
+	if err := cmd.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("cmd.ExecuteContext error: %v", err)
+	}
+	if !strings.Contains(errBuf.String(), "No attachments found in message.") {
+		t.Fatalf("expected notice in stderr, got:\n%s", errBuf.String())
+	}
+}
+
+func TestChatMessageDownloadJSONPristine(t *testing.T) {
+	tmp := t.TempDir()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/spaces/A/messages/t1.m1":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"name":       "spaces/A/messages/t1.m1",
+				"text":       "Download test",
+				"createTime": "2026-07-25T09:12:00Z",
+				"sender":     map[string]any{"name": "users/1", "displayName": "Linh", "type": "HUMAN"},
+				"attachment": []map[string]any{
+					{
+						"name":        "spaces/A/messages/t1.m1/attachments/att1",
+						"contentName": "doc.txt",
+						"contentType": "text/plain",
+						"source":      "UPLOADED_CONTENT",
+						"attachmentDataRef": map[string]any{
+							"resourceName": "spaces/A/messages/t1.m1/attachments/att1/media",
+						},
+					},
+				},
+			})
+		case "/v1/media/spaces/A/messages/t1.m1/attachments/att1/media":
+			_, _ = w.Write([]byte("pristine json"))
+		case "/v1/people:batchGet":
+			_ = json.NewEncoder(w).Encode(map[string]any{"responses": []any{}})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	var outJSON, errBuf bytes.Buffer
+	cmd := New().Command(testDeps(t, srv, "json", true, &outJSON))
+	cmd.SetOut(&outJSON)
+	cmd.SetErr(&errBuf)
+	cmd.SetArgs([]string{"message", "A/t1/m1", "--download", "--output-dir", tmp})
+	if err := cmd.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("cmd.ExecuteContext error: %v", err)
+	}
+
+	// stdout must be strictly valid JSON
+	var decoded MessageInfo
+	if err := json.Unmarshal(outJSON.Bytes(), &decoded); err != nil {
+		t.Fatalf("stdout must stay pristine JSON: %v\nJSON:\n%s", err, outJSON.String())
+	}
+	if decoded.ID != "A/t1/m1" {
+		t.Fatalf("unexpected message ID: %s", decoded.ID)
+	}
+
+	// stderr must contain download confirmation
+	if !strings.Contains(errBuf.String(), "Downloaded doc.txt ->") {
+		t.Errorf("stderr missing download confirmation:\n%s", errBuf.String())
+	}
+}
+
+func TestChatMessageCustomOutFlag(t *testing.T) {
+	tmp := t.TempDir()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/spaces/A/messages/t1.m1":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"name":       "spaces/A/messages/t1.m1",
+				"text":       "Single asset",
+				"createTime": "2026-07-25T09:12:00Z",
+				"sender":     map[string]any{"name": "users/1", "displayName": "Linh", "type": "HUMAN"},
+				"attachment": []map[string]any{
+					{
+						"name":        "spaces/A/messages/t1.m1/attachments/att1",
+						"contentName": "remote.txt",
+						"contentType": "text/plain",
+						"source":      "UPLOADED_CONTENT",
+						"attachmentDataRef": map[string]any{
+							"resourceName": "spaces/A/messages/t1.m1/attachments/att1/media",
+						},
+					},
+				},
+			})
+		case "/v1/media/spaces/A/messages/t1.m1/attachments/att1/media":
+			_, _ = w.Write([]byte("custom output content"))
+		case "/v1/people:batchGet":
+			_ = json.NewEncoder(w).Encode(map[string]any{"responses": []any{}})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	customPath := filepath.Join(tmp, "custom_name.txt")
+	var out bytes.Buffer
+	cmd := New().Command(testDeps(t, srv, "text", false, &out))
+	cmd.SetOut(&out)
+	cmd.SetArgs([]string{"message", "A/t1/m1", "--download", "--out", customPath})
+	cmd.SetErr(new(bytes.Buffer))
+	if err := cmd.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("cmd.ExecuteContext error: %v", err)
+	}
+
+	content, err := os.ReadFile(customPath)
+	if err != nil {
+		t.Fatalf("ReadFile error: %v", err)
+	}
+	if string(content) != "custom output content" {
+		t.Errorf("content = %q, want custom output content", string(content))
+	}
+}
+
+func TestChatMessageShortIDWithSpaceFlag(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/spaces/SPACE_1/messages/t1.m1":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"name":       "spaces/SPACE_1/messages/t1.m1",
+				"text":       "Space flag test",
+				"createTime": "2026-07-25T09:12:00Z",
+				"sender":     map[string]any{"name": "users/1", "displayName": "Linh", "type": "HUMAN"},
+			})
+		case "/v1/people:batchGet":
+			_ = json.NewEncoder(w).Encode(map[string]any{"responses": []any{}})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	var out bytes.Buffer
+	cmd := New().Command(testDeps(t, srv, "text", false, &out))
+	cmd.SetOut(&out)
+	cmd.SetArgs([]string{"message", "t1.m1", "--space", "SPACE_1"})
+	cmd.SetErr(new(bytes.Buffer))
+	if err := cmd.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("cmd.ExecuteContext error: %v", err)
+	}
+	if !strings.Contains(out.String(), "Space flag test") {
+		t.Fatalf("output missing message content:\n%s", out.String())
+	}
+}
+
+func TestChatMessageDriveAttachmentDownload(t *testing.T) {
+	tmp := t.TempDir()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/spaces/A/messages/t1.m1":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"name":       "spaces/A/messages/t1.m1",
+				"text":       "Drive attachment test",
+				"createTime": "2026-07-25T09:12:00Z",
+				"sender":     map[string]any{"name": "users/1", "displayName": "Linh", "type": "HUMAN"},
+				"attachment": []map[string]any{
+					{
+						"name":        "spaces/A/messages/t1.m1/attachments/drive1",
+						"contentName": "report.pdf",
+						"contentType": "application/pdf",
+						"source":      "DRIVE_FILE",
+						"driveDataRef": map[string]any{
+							"driveFileId": "drive-file-999",
+						},
+					},
+				},
+			})
+		case "/drive/v3/files/drive-file-999", "/files/drive-file-999":
+			if r.URL.Query().Get("alt") == "media" {
+				_, _ = w.Write([]byte("%PDF-1.4 mock content"))
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id":   "drive-file-999",
+				"name": "report.pdf",
+			})
+		case "/v1/people:batchGet":
+			_ = json.NewEncoder(w).Encode(map[string]any{"responses": []any{}})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	var out bytes.Buffer
+	cmd := New().Command(testDeps(t, srv, "text", false, &out))
+	cmd.SetOut(&out)
+	cmd.SetArgs([]string{"message", "A/t1/m1", "--download", "--output-dir", tmp})
+	cmd.SetErr(new(bytes.Buffer))
+	if err := cmd.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("cmd.ExecuteContext error: %v", err)
+	}
+
+	downloadedFile := filepath.Join(tmp, "report.pdf")
+	content, err := os.ReadFile(downloadedFile)
+	if err != nil {
+		t.Fatalf("ReadFile error: %v", err)
+	}
+	if string(content) != "%PDF-1.4 mock content" {
+		t.Errorf("content = %q, want mock pdf", string(content))
+	}
+	if !strings.Contains(out.String(), "Downloaded report.pdf") {
+		t.Errorf("stdout missing download confirmation:\n%s", out.String())
+	}
+}
+
+

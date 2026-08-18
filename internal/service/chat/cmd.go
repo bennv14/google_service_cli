@@ -16,6 +16,7 @@ import (
 	"github.com/bennv14/google_service_cli/internal/gerr"
 	"github.com/bennv14/google_service_cli/internal/output"
 	"github.com/bennv14/google_service_cli/internal/service"
+	"github.com/bennv14/google_service_cli/internal/service/drive"
 )
 
 // testClientOpts lets tests point the Chat client at an httptest server.
@@ -42,7 +43,7 @@ Requires a Google Workspace account: the Chat API does not serve consumer
 (@gmail.com) accounts. The Chat API must also be enabled in the GCP project
 behind your OAuth client.`,
 	}
-	cmd.AddCommand(spacesCmd(d), threadsCmd(d), messagesCmd(d), unreadCmd(d), mentionsCmd(d), threadCmd(d))
+	cmd.AddCommand(spacesCmd(d), threadsCmd(d), messagesCmd(d), unreadCmd(d), mentionsCmd(d), threadCmd(d), messageCmd(d))
 	return cmd
 }
 
@@ -408,3 +409,123 @@ with its unread count. This lists spaces, never messages.`,
 	addRefreshNamesFlag(c, f)
 	return c
 }
+
+func messageCmd(d *service.Deps) *cobra.Command {
+	var (
+		download     bool
+		outputDir    string
+		outFile      string
+		space        string
+		links        bool
+		refreshNames bool
+	)
+	c := &cobra.Command{
+		Use:   "message <messageId>",
+		Short: "Read a single message and optionally download its attachments",
+		Long: `Read a single message by ID, URL, or resource name.
+
+Supported ID formats:
+  - 3-segment ID: AAAA9GOspFY/t-uT1uhCWAg/emH4eHFJkeY
+  - Chat web URL: https://chat.google.com/room/AAAA9GOspFY/t-uT1uhCWAg/emH4eHFJkeY
+  - Resource name: spaces/AAAA9GOspFY/messages/t-uT1uhCWAg.emH4eHFJkeY
+  - Short ID with --space: t-uT1uhCWAg.emH4eHFJkeY --space AAAA9GOspFY`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := cmd.Context()
+			name, err := qualifyMessage(args[0], space)
+			if err != nil {
+				return err
+			}
+
+			flags := &queryFlags{refreshNames: refreshNames}
+			e, err := engine(ctx, d, flags)
+			if err != nil {
+				return err
+			}
+
+			sm, err := e.Message(ctx, name, accountIndex(d))
+			if err != nil {
+				return gerr.Friendly(err)
+			}
+			sm.Opts = renderOpts(cmd, "", links)
+
+			if err := writer(d).Render(sm); err != nil {
+				return err
+			}
+
+			reportWarnings(cmd.ErrOrStderr(), sm.Warnings)
+
+			if download {
+				if len(sm.Message.Attachments) == 0 {
+					fmt.Fprintln(cmd.ErrOrStderr(), "No attachments found in message.")
+					return nil
+				}
+
+				hc, err := d.NewClient(ctx, OAuthScopes...)
+				if err != nil {
+					return err
+				}
+				chatCl, err := NewClient(ctx, hc, testClientOpts...)
+				if err != nil {
+					return err
+				}
+
+				var driveCl *drive.Client
+				hasDriveFile := false
+				for _, att := range sm.Message.Attachments {
+					if att.Source == "DRIVE_FILE" || att.DriveFileID != "" {
+						hasDriveFile = true
+						break
+					}
+				}
+				if hasDriveFile {
+					hcDrive, err := d.NewClient(ctx, drive.OAuthScopes...)
+					if err != nil {
+						return err
+					}
+					driveCl, err = drive.NewClient(ctx, hcDrive, testClientOpts...)
+					if err != nil {
+						return err
+					}
+				}
+
+				strategies := []DownloadStrategy{
+					NewChatMediaStrategy(chatCl),
+				}
+				if driveCl != nil {
+					strategies = append(strategies, NewDriveFileStrategy(driveCl))
+				}
+
+				dl := NewDownloader(strategies...)
+				results, err := dl.DownloadAll(ctx, sm.Message.Attachments, outputDir, outFile)
+				if err != nil {
+					return err
+				}
+
+				outW := cmd.OutOrStdout()
+				if d.OutputFormat == "json" {
+					outW = cmd.ErrOrStderr()
+				}
+				for _, r := range results {
+					if r.Err != nil {
+						fmt.Fprintf(cmd.ErrOrStderr(), "warning: failed to download %s: %v\n", r.Attachment.ContentName, r.Err)
+					} else {
+						fmt.Fprintf(outW, "Downloaded %s -> %s\n", r.Attachment.ContentName, r.LocalPath)
+					}
+				}
+			}
+
+			return nil
+		},
+	}
+
+	c.Flags().BoolVar(&download, "download", false, "download all assets attached to this message")
+	c.Flags().StringVar(&outputDir, "output-dir", ".", "directory to save downloaded assets")
+	c.Flags().StringVar(&outFile, "out", "", "custom output filename for a single asset")
+	c.Flags().StringVar(&space, "space", "", "space ID if passing a shortened message ID")
+	c.Flags().BoolVar(&links, "links", false, "print URLs on their own lines instead of embedding them")
+	c.Flags().BoolVar(&refreshNames, "refresh-names", false, "ignore cached display names and look them up again")
+
+	return c
+}
+
