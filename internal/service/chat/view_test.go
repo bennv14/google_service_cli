@@ -171,3 +171,56 @@ func TestExcerptAndOneLine(t *testing.T) {
 		t.Errorf("excerpt = %q", got)
 	}
 }
+
+func TestSingleMessageOutput(t *testing.T) {
+	tm, _ := time.Parse(time.RFC3339, "2026-08-19T10:30:00Z")
+	msg := MessageInfo{
+		ID:           "AAAA9GOspFY/t-uT1uhCWAg/emH4eHFJkeY",
+		RawName:      "spaces/AAAA9GOspFY/messages/t-uT1uhCWAg.emH4eHFJkeY",
+		IsThreadHead: true,
+		CreateTime:   tm,
+		Sender:       Sender{ID: "users/123", Name: "Nguyen Van A", Type: "HUMAN"},
+		Text:         "Check out proposal",
+		Attachments: []AttachmentInfo{
+			{
+				Name:        "spaces/AAAA9GOspFY/messages/t-uT1uhCWAg.emH4eHFJkeY/attachments/att1",
+				ContentName: "proposal.pdf",
+				ContentType: "application/pdf",
+				Source:      "UPLOADED_CONTENT",
+			},
+		},
+	}
+
+	sm := SingleMessage{Message: msg}
+
+	// Test TableView Headers and Rows
+	headers := sm.Headers()
+	if len(headers) != 5 || headers[4] != "ATTACHMENTS" {
+		t.Fatalf("unexpected headers: %v", headers)
+	}
+	rows := sm.Rows()
+	if len(rows) != 1 || rows[0][4] != "proposal.pdf" {
+		t.Fatalf("unexpected rows: %v", rows)
+	}
+
+	// Test JSON marshaling
+	data, err := json.Marshal(sm)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded["id"] != "AAAA9GOspFY/t-uT1uhCWAg/emH4eHFJkeY" {
+		t.Errorf("decoded ID = %v", decoded["id"])
+	}
+	if decoded["text"] != "Check out proposal" {
+		t.Errorf("decoded text = %v", decoded["text"])
+	}
+	atts, ok := decoded["attachments"].([]any)
+	if !ok || len(atts) != 1 {
+		t.Fatalf("decoded attachments = %v", decoded["attachments"])
+	}
+}
+
