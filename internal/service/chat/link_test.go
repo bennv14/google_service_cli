@@ -104,3 +104,108 @@ func TestShortID(t *testing.T) {
 		t.Errorf("shortID = %q", got)
 	}
 }
+
+func TestFormatMessageID(t *testing.T) {
+	cases := []struct {
+		in   string
+		want string
+	}{
+		{
+			in:   "spaces/AAAA9GOspFY/messages/t-uT1uhCWAg.emH4eHFJkeY",
+			want: "AAAA9GOspFY/t-uT1uhCWAg/emH4eHFJkeY",
+		},
+		{
+			in:   "spaces/A/messages/t1.t1",
+			want: "A/t1/t1",
+		},
+		{
+			in:   "invalid-name",
+			want: "invalid-name",
+		},
+		{
+			in:   "",
+			want: "",
+		},
+	}
+	for _, c := range cases {
+		if got := formatMessageID(c.in); got != c.want {
+			t.Errorf("formatMessageID(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+func TestQualifyMessage(t *testing.T) {
+	cases := []struct {
+		name      string
+		ref       string
+		space     string
+		want      string
+		wantError bool
+	}{
+		{
+			name: "3-segment ID",
+			ref:  "AAAA9GOspFY/t-uT1uhCWAg/emH4eHFJkeY",
+			want: "spaces/AAAA9GOspFY/messages/t-uT1uhCWAg.emH4eHFJkeY",
+		},
+		{
+			name: "chat.google.com web room URL",
+			ref:  "https://chat.google.com/room/AAAA9GOspFY/t-uT1uhCWAg/emH4eHFJkeY",
+			want: "spaces/AAAA9GOspFY/messages/t-uT1uhCWAg.emH4eHFJkeY",
+		},
+		{
+			name: "chat.google.com web u/0 URL",
+			ref:  "https://chat.google.com/u/0/room/AAAA9GOspFY/t-uT1uhCWAg/emH4eHFJkeY",
+			want: "spaces/AAAA9GOspFY/messages/t-uT1uhCWAg.emH4eHFJkeY",
+		},
+		{
+			name: "canonical resource name",
+			ref:  "spaces/AAAA9GOspFY/messages/t-uT1uhCWAg.emH4eHFJkeY",
+			want: "spaces/AAAA9GOspFY/messages/t-uT1uhCWAg.emH4eHFJkeY",
+		},
+		{
+			name:  "short dotted ID with space flag",
+			ref:   "t-uT1uhCWAg.emH4eHFJkeY",
+			space: "AAAA9GOspFY",
+			want:  "spaces/AAAA9GOspFY/messages/t-uT1uhCWAg.emH4eHFJkeY",
+		},
+		{
+			name:  "short slashed ID with spaces/ prefix in space flag",
+			ref:   "t-uT1uhCWAg/emH4eHFJkeY",
+			space: "spaces/AAAA9GOspFY",
+			want:  "spaces/AAAA9GOspFY/messages/t-uT1uhCWAg.emH4eHFJkeY",
+		},
+		{
+			name:      "short ID without space flag",
+			ref:       "t-uT1uhCWAg.emH4eHFJkeY",
+			wantError: true,
+		},
+		{
+			name:      "empty ref",
+			ref:       "",
+			wantError: true,
+		},
+		{
+			name:      "invalid garbage ref",
+			ref:       "not/a/valid/message/reference/path",
+			wantError: true,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := qualifyMessage(c.ref, c.space)
+			if c.wantError {
+				if err == nil {
+					t.Fatalf("qualifyMessage(%q, %q) succeeded, want error", c.ref, c.space)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("qualifyMessage(%q, %q) error: %v", c.ref, c.space, err)
+			}
+			if got != c.want {
+				t.Errorf("qualifyMessage(%q, %q) = %q, want %q", c.ref, c.space, got, c.want)
+			}
+		})
+	}
+}
+
