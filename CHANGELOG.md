@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [v2.1.0] - 2026-08-19
+## [v2.0.5] - 2026-08-19
 
 ### Added
 
@@ -181,8 +181,8 @@ First release.
 - Global flags: `--profile`, `--output`/`-o`, `--verbose`.
 - Build-time version injection surfaced by `gsvc version`.
 
-[Unreleased]: https://github.com/bennv14/google_service_cli/compare/v2.1.0...HEAD
-[v2.1.0]: https://github.com/bennv14/google_service_cli/compare/v2.0.4...v2.1.0
+[Unreleased]: https://github.com/bennv14/google_service_cli/compare/v2.0.5...HEAD
+[v2.0.5]: https://github.com/bennv14/google_service_cli/compare/v2.0.4...v2.0.5
 [v2.0.4]: https://github.com/bennv14/google_service_cli/compare/v2.0.3...v2.0.4
 [v2.0.3]: https://github.com/bennv14/google_service_cli/compare/v2.0.2...v2.0.3
 [v2.0.2]: https://github.com/bennv14/google_service_cli/compare/v2.0.1...v2.0.2
