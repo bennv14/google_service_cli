@@ -89,8 +89,10 @@ func writeRow(w io.Writer, prefix string, left, right seg) {
 // signature drift on either Text method fails the build instead of surfacing
 // as a runtime "cannot render as text" error.
 var (
-	_ output.TextView = Result{}
-	_ output.TextView = SpaceList{}
+	_ output.TextView  = Result{}
+	_ output.TextView  = SpaceList{}
+	_ output.TextView  = SingleMessage{}
+	_ output.TableView = SingleMessage{}
 )
 
 // Text renders the result as a tree: space → thread → message → body.
@@ -190,6 +192,20 @@ func renderMessages(w io.Writer, msgs []MessageInfo, cont string, o RenderOpts) 
 
 		for _, line := range wrapText(m.Text, textWidth) {
 			fmt.Fprintf(w, "%s%s\n", body, line)
+		}
+		for _, att := range m.Attachments {
+			name := att.ContentName
+			if name == "" {
+				name = shortID(att.Name)
+			}
+			if att.ContentType != "" {
+				fmt.Fprintf(w, "%s📎 %s (%s)\n", body, name, att.ContentType)
+			} else {
+				fmt.Fprintf(w, "%s📎 %s\n", body, name)
+			}
+			if o.ShowLinks && att.DownloadURI != "" {
+				fmt.Fprintf(w, "%s   %s\n", body, att.DownloadURI)
+			}
 		}
 		if o.ShowLinks && m.Link != "" {
 			fmt.Fprintf(w, "%s%s\n", body, m.Link)
@@ -368,3 +384,11 @@ func spaceTypeLabel(t string) string {
 		return strings.ToLower(t)
 	}
 }
+
+// Text renders a single message.
+func (sm SingleMessage) Text(w io.Writer) error {
+	bw := bufio.NewWriter(w)
+	renderMessages(bw, []MessageInfo{sm.Message}, "", sm.Opts)
+	return bw.Flush()
+}
+
