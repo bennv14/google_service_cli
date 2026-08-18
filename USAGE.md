@@ -379,6 +379,55 @@ gsvc chat threads --space "Engineering" --since 7d --limit 5
 > therefore saves no API calls. The window is always scanned in full: stopping
 > early would show only each thread's tail and mislabel it.
 
+### `chat message`
+
+Read a single message by ID, web URL, or resource name, and optionally download
+its attachments. The message ID is passed as a positional argument.
+
+Message IDs across all commands are formatted as `spaceId/threadId/messageId` so
+they can be copied directly into `chat message`.
+
+**Supported ID formats:**
+
+| Format | Example | Description |
+| --- | --- | --- |
+| 3-segment ID | `AAAA9GOspFY/t-uT1uhCWAg/emH4eHFJkeY` | Standard `spaceId/threadId/messageId` format |
+| Chat web URL | `https://chat.google.com/room/AAAA9GOspFY/t-uT1uhCWAg/emH4eHFJkeY` | Direct browser URL from "Copy link to message" |
+| Resource name | `spaces/AAAA9GOspFY/messages/t-uT1uhCWAg.emH4eHFJkeY` | Canonical Chat API resource name |
+| Short ID with `--space` | `t-uT1uhCWAg.emH4eHFJkeY --space AAAA9GOspFY` | Message ID or `threadId/messageId` with `--space` |
+
+| Flag | Default | Description |
+| --- | --- | --- |
+| `--download` | | Download all assets attached to this message |
+| `--output-dir <path>` | `.` | Directory to save downloaded assets |
+| `--out <filename>` | | Custom output filename for a single asset |
+| `--space <s>` | | Space ID if passing a shortened message ID |
+| `--links` | | Print URLs on their own lines instead of embedding them |
+| `--refresh-names` | | Ignore cached display names and look them up again |
+
+Attachments (both Chat uploaded files and Google Drive attachments) are listed in
+the message output with their name and MIME type (`📎 filename (type)`).
+With `--download`, attachments are fetched via the Chat Media API or Google Drive
+API and saved locally. Untrusted remote filenames are automatically sanitized to
+prevent path traversal.
+
+```bash
+# Read a single message
+gsvc chat message AAAA9GOspFY/t-uT1uhCWAg/emH4eHFJkeY
+
+# Read a message via copied Chat URL
+gsvc chat message https://chat.google.com/room/AAAA9GOspFY/t-uT1uhCWAg/emH4eHFJkeY
+
+# Read and download all attachments to a specific directory
+gsvc chat message AAAA9GOspFY/t-uT1uhCWAg/emH4eHFJkeY --download --output-dir ./downloads
+
+# Download a single attachment with a custom filename
+gsvc chat message AAAA9GOspFY/t-uT1uhCWAg/emH4eHFJkeY --download --out ./invoice.pdf
+
+# Read message metadata and attachments as JSON
+gsvc chat message AAAA9GOspFY/t-uT1uhCWAg/emH4eHFJkeY -o json
+```
+
 ## Shell completion
 
 **Homebrew** installs the bash, zsh, and fish completions with the cask — start
