@@ -20,7 +20,11 @@
 // levels so nothing is lost.
 package chat
 
-import "strings"
+import (
+	"fmt"
+	"net/url"
+	"strings"
+)
 
 const chatBaseURL = "https://chat.google.com"
 
@@ -117,3 +121,82 @@ func shortID(resourceName string) string {
 	}
 	return resourceName
 }
+
+// formatMessageID converts "spaces/{sid}/messages/{tid}.{mid}" into "{sid}/{tid}/{mid}".
+// If unparseable, it returns the original string.
+func formatMessageID(resourceName string) string {
+	sid, tid, mid, ok := splitMessageName(resourceName)
+	if !ok {
+		return resourceName
+	}
+	return sid + "/" + tid + "/" + mid
+}
+
+// qualifyMessage normalizes various input forms into a canonical resource name
+// "spaces/{sid}/messages/{tid}.{mid}".
+//
+// Supported input forms:
+// 1. "AAAA9GOspFY/t-uT1uhCWAg/emH4eHFJkeY" -> "spaces/AAAA9GOspFY/messages/t-uT1uhCWAg.emH4eHFJkeY"
+// 2. "https://chat.google.com/room/AAAA9GOspFY/t-uT1uhCWAg/emH4eHFJkeY" -> "spaces/AAAA9GOspFY/messages/t-uT1uhCWAg.emH4eHFJkeY"
+// 3. "spaces/AAAA9GOspFY/messages/t-uT1uhCWAg.emH4eHFJkeY" -> as-is
+// 4. "t-uT1uhCWAg.emH4eHFJkeY" or "t-uT1uhCWAg/emH4eHFJkeY" with spaceFlag="AAAA9GOspFY"
+func qualifyMessage(ref, spaceFlag string) (string, error) {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return "", fmt.Errorf("message ID cannot be empty")
+	}
+
+	// 1. Full resource name: spaces/{sid}/messages/{tid}.{mid}
+	if strings.HasPrefix(ref, "spaces/") {
+		if _, _, _, ok := splitMessageName(ref); ok {
+			return ref, nil
+		}
+		return "", fmt.Errorf("invalid message resource name %q: expected format spaces/{spaceId}/messages/{threadId}.{messageId}", ref)
+	}
+
+	// 2. Web URL: https://chat.google.com/...
+	if strings.HasPrefix(ref, "http://") || strings.HasPrefix(ref, "https://") {
+		u, err := url.Parse(ref)
+		if err != nil {
+			return "", fmt.Errorf("invalid message URL %q: %w", ref, err)
+		}
+		parts := strings.FieldsFunc(strings.Trim(u.Path, "/"), func(r rune) bool { return r == '/' })
+		// Find "room" segment in URL path: .../room/{sid}/{tid}/{mid}
+		for i, part := range parts {
+			if part == "room" && len(parts) >= i+4 {
+				sid, tid, mid := parts[i+1], parts[i+2], parts[i+3]
+				return fmt.Sprintf("spaces/%s/messages/%s.%s", sid, tid, mid), nil
+			}
+		}
+		return "", fmt.Errorf("invalid chat message URL %q: expected path containing /room/{spaceId}/{threadId}/{messageId}", ref)
+	}
+
+	// 3. 3-segment format: sid/tid/mid
+	parts := strings.Split(ref, "/")
+	if len(parts) == 3 && parts[0] != "" && parts[1] != "" && parts[2] != "" {
+		return fmt.Sprintf("spaces/%s/messages/%s.%s", parts[0], parts[1], parts[2]), nil
+	}
+
+	// 4. Short form with space flag
+	if spaceFlag != "" {
+		sid := spaceFlag
+		if s, ok := splitSpaceName(spaceFlag); ok {
+			sid = s
+		}
+		sid = strings.TrimPrefix(sid, "spaces/")
+
+		// Could be "tid.mid" or "tid/mid"
+		if strings.Contains(ref, ".") {
+			t, m, found := strings.Cut(ref, ".")
+			if found && t != "" && m != "" {
+				return fmt.Sprintf("spaces/%s/messages/%s.%s", sid, t, m), nil
+			}
+		}
+		if len(parts) == 2 && parts[0] != "" && parts[1] != "" {
+			return fmt.Sprintf("spaces/%s/messages/%s.%s", sid, parts[0], parts[1]), nil
+		}
+	}
+
+	return "", fmt.Errorf("invalid message ID %q: expected format spaceId/threadId/messageId, URL, spaces/{spaceId}/messages/{threadId}.{messageId}, or threadId.messageId with --space", ref)
+}
+
