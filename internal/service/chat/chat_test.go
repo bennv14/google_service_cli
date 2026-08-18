@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -410,3 +412,60 @@ func TestGetMessageFetchesOneMessageWithTheListFieldMask(t *testing.T) {
 		t.Fatalf("fields = %q, want %q", gotFields, messageFields)
 	}
 }
+
+func TestDownloadMediaStreamsContent(t *testing.T) {
+	cl := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/media/spaces/A/messages/m1/attachments/att1/media" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/pdf")
+		_, _ = w.Write([]byte("%PDF-1.4 mock content"))
+	})
+
+	tmp := t.TempDir()
+	outPath := filepath.Join(tmp, "out.pdf")
+	err := cl.DownloadMedia(context.Background(), "spaces/A/messages/m1/attachments/att1/media", outPath)
+	if err != nil {
+		t.Fatalf("DownloadMedia error: %v", err)
+	}
+
+	body, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("ReadFile error: %v", err)
+	}
+	if string(body) != "%PDF-1.4 mock content" {
+		t.Fatalf("got body %q, want %%PDF-1.4 mock content", string(body))
+	}
+}
+
+func TestDownloadMediaCleansUpOnStreamError(t *testing.T) {
+	cl := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", "100")
+		_, _ = w.Write([]byte("short")) // Truncated body causes unexpected EOF on copy
+	})
+
+	tmp := t.TempDir()
+	outPath := filepath.Join(tmp, "partial.pdf")
+	err := cl.DownloadMedia(context.Background(), "spaces/A/messages/m1/attachments/att1/media", outPath)
+	if err == nil {
+		t.Fatal("expected error on truncated stream, got nil")
+	}
+
+	if _, statErr := os.Stat(outPath); !os.IsNotExist(statErr) {
+		t.Fatalf("expected partial file %q to be deleted, but it exists", outPath)
+	}
+}
+
+func TestMessageFieldsIncludesAttachments(t *testing.T) {
+	if !strings.Contains(messageFields, "attachment(") {
+		t.Fatalf("messageFields %q does not request attachment fields", messageFields)
+	}
+	if !strings.Contains(messageFields, "attachmentDataRef(resourceName)") {
+		t.Fatalf("messageFields %q does not request attachment resourceName", messageFields)
+	}
+	if !strings.Contains(messageFields, "driveDataRef(driveFileId)") {
+		t.Fatalf("messageFields %q does not request driveFileId", messageFields)
+	}
+}
+
