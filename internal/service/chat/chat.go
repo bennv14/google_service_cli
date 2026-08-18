@@ -3,7 +3,9 @@ package chat
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
+	"os"
 	"time"
 
 	chatapi "google.golang.org/api/chat/v1"
@@ -27,7 +29,8 @@ var OAuthScopes = []string{
 const (
 	spaceFields   = "name,displayName,spaceType,spaceThreadingState,spaceUri"
 	messageFields = "name,createTime,text,sender(name,displayName,type)," +
-		"thread(name),annotations(type,userMention(type,user(name,displayName)))"
+		"thread(name),annotations(type,userMention(type,user(name,displayName)))," +
+		"attachment(name,contentName,contentType,source,attachmentDataRef(resourceName),driveDataRef(driveFileId),downloadUri)"
 	pageSize = 1000
 
 	// probeFields is all the newest-message probe needs: who sent it.
@@ -211,3 +214,33 @@ func (c *Client) LatestMessages(ctx context.Context, parent string, n int) ([]*c
 func (c *Client) GetMessage(ctx context.Context, name string) (*chatapi.Message, error) {
 	return c.svc.Spaces.Messages.Get(name).Context(ctx).Fields(messageFields).Do()
 }
+
+// DownloadMedia fetches an uploaded attachment's raw byte stream by its resource name
+// and writes it to targetPath. If an error occurs during transfer, any partially written
+// file at targetPath is removed.
+func (c *Client) DownloadMedia(ctx context.Context, resourceName, targetPath string) (err error) {
+	resp, err := c.svc.Media.Download(resourceName).Context(ctx).Download()
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	out, err := os.Create(targetPath)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		closeErr := out.Close()
+		if err != nil {
+			_ = os.Remove(targetPath)
+		} else if closeErr != nil {
+			err = closeErr
+		}
+	}()
+
+	if _, err = io.Copy(out, resp.Body); err != nil {
+		return err
+	}
+	return nil
+}
+
