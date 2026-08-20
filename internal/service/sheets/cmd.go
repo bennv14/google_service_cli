@@ -3,11 +3,14 @@ package sheets
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strconv"
+	"strings"
 
 	"github.com/spf13/cobra"
+	"google.golang.org/api/googleapi"
 	"google.golang.org/api/option"
 
 	"github.com/bennv14/google_service_cli/internal/gerr"
@@ -54,6 +57,24 @@ func (s *svc) Command(d *service.Deps) *cobra.Command {
 	return cmd
 }
 
+func friendlyErr(err error) error {
+	var gErr *googleapi.Error
+	if errors.As(err, &gErr) {
+		switch gErr.Code {
+		case 404:
+			return fmt.Errorf("spreadsheet not found (verify spreadsheet ID): %w", err)
+		case 403:
+			return fmt.Errorf("permission denied (ensure your account has access to this spreadsheet): %w", err)
+		case 400:
+			msg := strings.ToLower(gErr.Message)
+			if strings.Contains(msg, "unable to parse range") || strings.Contains(msg, "invalid range") {
+				return fmt.Errorf("invalid range notation (example: 'Sheet1!A1:C10'): %w", err)
+			}
+		}
+	}
+	return gerr.Friendly(err)
+}
+
 func client(ctx context.Context, d *service.Deps, scope string) (*Client, error) {
 	hc, err := d.NewClient(ctx, scope)
 	if err != nil {
@@ -76,7 +97,7 @@ func createCmd(d *service.Deps) *cobra.Command {
 			}
 			meta, err := cl.Create(ctx, args[0], tabTitle)
 			if err != nil {
-				return gerr.Friendly(err)
+				return friendlyErr(err)
 			}
 			return d.Out.Render(meta)
 		},
@@ -99,7 +120,7 @@ func infoCmd(d *service.Deps) *cobra.Command {
 			}
 			info, err := cl.GetMetadata(ctx, args[0])
 			if err != nil {
-				return gerr.Friendly(err)
+				return friendlyErr(err)
 			}
 			return d.Out.Render(info)
 		},
@@ -121,7 +142,7 @@ func getCmd(d *service.Deps) *cobra.Command {
 			}
 			vr, err := cl.GetValues(ctx, args[0], args[1], render)
 			if err != nil {
-				return gerr.Friendly(err)
+				return friendlyErr(err)
 			}
 			return d.Out.Render(vr)
 		},
@@ -151,7 +172,7 @@ func appendCmd(d *service.Deps) *cobra.Command {
 			}
 			res, err := cl.AppendValues(ctx, args[0], args[1], vals, inputType)
 			if err != nil {
-				return gerr.Friendly(err)
+				return friendlyErr(err)
 			}
 			return d.Out.Render(res)
 		},
@@ -183,7 +204,7 @@ func updateCmd(d *service.Deps) *cobra.Command {
 			}
 			res, err := cl.UpdateValues(ctx, args[0], args[1], vals, inputType)
 			if err != nil {
-				return gerr.Friendly(err)
+				return friendlyErr(err)
 			}
 			return d.Out.Render(res)
 		},
@@ -205,7 +226,7 @@ func clearCmd(d *service.Deps) *cobra.Command {
 				return err
 			}
 			if err := cl.ClearValues(ctx, args[0], args[1]); err != nil {
-				return gerr.Friendly(err)
+				return friendlyErr(err)
 			}
 			return d.Out.Render(SimpleMessage{Message: fmt.Sprintf("Cleared range %s", args[1])})
 		},
@@ -230,7 +251,7 @@ func addTabCmd(d *service.Deps) *cobra.Command {
 			}
 			res, err := cl.AddTab(ctx, args[0], args[1], index, rows, cols)
 			if err != nil {
-				return gerr.Friendly(err)
+				return friendlyErr(err)
 			}
 			return d.Out.Render(res)
 		},
@@ -257,7 +278,7 @@ func deleteTabCmd(d *service.Deps) *cobra.Command {
 				return err
 			}
 			if err := cl.DeleteTab(ctx, args[0], sheetID); err != nil {
-				return gerr.Friendly(err)
+				return friendlyErr(err)
 			}
 			return d.Out.Render(SimpleMessage{Message: fmt.Sprintf("Deleted tab %d", sheetID)})
 		},
@@ -284,10 +305,10 @@ func exportCmd(d *service.Deps) *cobra.Command {
 				w = nil
 			}
 			if err := cl.ExportCSV(ctx, args[0], sheetName, outPath, w); err != nil {
-				return gerr.Friendly(err)
+				return friendlyErr(err)
 			}
 			if outPath != "" {
-				fmt.Fprintf(cmd.OutOrStdout(), "Exported to %s\n", CleanPath(outPath))
+				fmt.Fprintf(cmd.ErrOrStderr(), "Exported to %s\n", CleanPath(outPath))
 			}
 			return nil
 		},

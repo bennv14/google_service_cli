@@ -520,6 +520,52 @@ func TestClientAddTab_Defaults(t *testing.T) {
 	}
 }
 
+func TestClientAddTab_ZeroIndex(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		requests := req["requests"].([]any)
+		firstReq := requests[0].(map[string]any)
+		addSheet := firstReq["addSheet"].(map[string]any)
+		props := addSheet["properties"].(map[string]any)
+
+		// Verify index is present and zero
+		if index, ok := props["index"]; !ok || index.(float64) != 0 {
+			http.Error(w, "index 0 should be serialized", http.StatusBadRequest)
+			return
+		}
+
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"spreadsheetId": "sheet-tab-test",
+			"replies": []any{
+				map[string]any{
+					"addSheet": map[string]any{
+						"properties": map[string]any{
+							"sheetId": 124,
+							"title":   props["title"],
+						},
+					},
+				},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	ctx := context.Background()
+	cl, err := NewClient(ctx, srv.Client(), option.WithEndpoint(srv.URL+"/"), option.WithoutAuthentication())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tab, err := cl.AddTab(ctx, "sheet-tab-test", "ZeroIndexTab", 0, 10, 10)
+	if err != nil {
+		t.Fatalf("AddTab() failed: %v", err)
+	}
+	if tab.SheetID != 124 || tab.Title != "ZeroIndexTab" {
+		t.Fatalf("unexpected tab result: %+v", tab)
+	}
+}
+
 func TestClientExportCSV_SpecialTabName(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/v4/spreadsheets/sheet-special/values/'John''s Data'" {

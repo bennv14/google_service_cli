@@ -230,6 +230,7 @@ func (c *Client) AddTab(ctx context.Context, spreadsheetID, title string, index,
 	}
 	if index >= 0 {
 		sheetProps.Index = index
+		sheetProps.ForceSendFields = []string{"Index"}
 	}
 
 	req := &sheetsapi.BatchUpdateSpreadsheetRequest{
