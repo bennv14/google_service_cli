@@ -1,0 +1,311 @@
+// internal/service/sheets/sheets_test.go
+package sheets
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"google.golang.org/api/option"
+)
+
+func TestOAuthScopes(t *testing.T) {
+	if len(OAuthScopes) != 2 {
+		t.Fatalf("expected 2 scopes, got %d", len(OAuthScopes))
+	}
+	if OAuthScopes[0] != ScopeSpreadsheets || OAuthScopes[1] != ScopeReadonly {
+		t.Fatalf("unexpected scopes: %v", OAuthScopes)
+	}
+}
+
+func TestResolveOptions(t *testing.T) {
+	// Test render option resolution
+	if got := resolveRenderOption("unformatted"); got != "UNFORMATTED_VALUE" {
+		t.Errorf("expected UNFORMATTED_VALUE, got %s", got)
+	}
+	if got := resolveRenderOption("FORMULA"); got != "FORMULA" {
+		t.Errorf("expected FORMULA, got %s", got)
+	}
+	if got := resolveRenderOption("formatted"); got != "FORMATTED_VALUE" {
+		t.Errorf("expected FORMATTED_VALUE, got %s", got)
+	}
+	if got := resolveRenderOption("other"); got != "FORMATTED_VALUE" {
+		t.Errorf("expected default FORMATTED_VALUE, got %s", got)
+	}
+
+	// Test input option resolution
+	if got := resolveInputOption("raw"); got != "RAW" {
+		t.Errorf("expected RAW, got %s", got)
+	}
+	if got := resolveInputOption("RAW"); got != "RAW" {
+		t.Errorf("expected RAW, got %s", got)
+	}
+	if got := resolveInputOption("user_entered"); got != "USER_ENTERED" {
+		t.Errorf("expected USER_ENTERED, got %s", got)
+	}
+	if got := resolveInputOption("anything_else"); got != "USER_ENTERED" {
+		t.Errorf("expected default USER_ENTERED, got %s", got)
+	}
+}
+
+func TestClientCreate(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v4/spreadsheets" {
+			http.NotFound(w, r)
+			return
+		}
+		var req map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		props, ok := req["properties"].(map[string]any)
+		if !ok || props["title"] != "New Budget" {
+			http.Error(w, "invalid title", http.StatusBadRequest)
+			return
+		}
+		sheetsList, ok := req["sheets"].([]any)
+		if !ok || len(sheetsList) != 1 {
+			http.Error(w, "expected 1 sheet", http.StatusBadRequest)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"spreadsheetId":  "created-id-123",
+			"spreadsheetUrl": "https://docs.google.com/spreadsheets/d/created-id-123",
+			"properties": map[string]any{
+				"title": "New Budget",
+			},
+		})
+	}))
+	defer srv.Close()
+
+	ctx := context.Background()
+	cl, err := NewClient(ctx, srv.Client(), option.WithEndpoint(srv.URL+"/"), option.WithoutAuthentication())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	meta, err := cl.Create(ctx, "New Budget", "Sheet1")
+	if err != nil {
+		t.Fatalf("Create() failed: %v", err)
+	}
+	if meta.ID != "created-id-123" || meta.Title != "New Budget" || meta.URL != "https://docs.google.com/spreadsheets/d/created-id-123" {
+		t.Fatalf("unexpected meta: %+v", meta)
+	}
+}
+
+func TestClientCreate_WithoutDefaultTab(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v4/spreadsheets" {
+			http.NotFound(w, r)
+			return
+		}
+		var req map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if _, exists := req["sheets"]; exists {
+			http.Error(w, "sheets should not be present", http.StatusBadRequest)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"spreadsheetId":  "created-id-456",
+			"spreadsheetUrl": "https://docs.google.com/spreadsheets/d/created-id-456",
+			"properties": map[string]any{
+				"title": "Default Sheet",
+			},
+		})
+	}))
+	defer srv.Close()
+
+	ctx := context.Background()
+	cl, err := NewClient(ctx, srv.Client(), option.WithEndpoint(srv.URL+"/"), option.WithoutAuthentication())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	meta, err := cl.Create(ctx, "Default Sheet", "")
+	if err != nil {
+		t.Fatalf("Create() failed: %v", err)
+	}
+	if meta.ID != "created-id-456" || meta.Title != "Default Sheet" {
+		t.Fatalf("unexpected meta: %+v", meta)
+	}
+}
+
+func TestClientGetMetadata(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v4/spreadsheets/sheet-abc" {
+			http.NotFound(w, r)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"spreadsheetId": "sheet-abc",
+			"properties": map[string]any{
+				"title":    "Company Metrics",
+				"locale":   "en_US",
+				"timeZone": "UTC",
+			},
+			"sheets": []map[string]any{
+				{
+					"properties": map[string]any{
+						"sheetId": 0,
+						"title":   "Overview",
+						"index":   0,
+						"hidden":  false,
+						"gridProperties": map[string]any{
+							"rowCount":    50,
+							"columnCount": 10,
+						},
+					},
+				},
+				{
+					// Sheet without properties or grid properties edge cases
+				},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	ctx := context.Background()
+	cl, err := NewClient(ctx, srv.Client(), option.WithEndpoint(srv.URL+"/"), option.WithoutAuthentication())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	info, err := cl.GetMetadata(ctx, "sheet-abc")
+	if err != nil {
+		t.Fatalf("GetMetadata() failed: %v", err)
+	}
+	if info.ID != "sheet-abc" || info.Title != "Company Metrics" || info.Locale != "en_US" || info.TimeZone != "UTC" || len(info.Sheets) != 1 {
+		t.Fatalf("unexpected info: %+v", info)
+	}
+	if info.Sheets[0].Title != "Overview" || info.Sheets[0].Rows != 50 || info.Sheets[0].Cols != 10 {
+		t.Fatalf("unexpected sheet tab: %+v", info.Sheets[0])
+	}
+}
+
+func TestClientGetValues(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v4/spreadsheets/sheet-abc/values/Sheet1!A1:B2" {
+			http.NotFound(w, r)
+			return
+		}
+		renderOpt := r.URL.Query().Get("valueRenderOption")
+		if renderOpt != "FORMATTED_VALUE" {
+			http.Error(w, "invalid render option: "+renderOpt, http.StatusBadRequest)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"range":          "Sheet1!A1:B2",
+			"majorDimension": "ROWS",
+			"values": []any{
+				[]any{"Name", "Score"},
+				[]any{"Alice", "100"},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	ctx := context.Background()
+	cl, err := NewClient(ctx, srv.Client(), option.WithEndpoint(srv.URL+"/"), option.WithoutAuthentication())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	vr, err := cl.GetValues(ctx, "sheet-abc", "Sheet1!A1:B2", "formatted")
+	if err != nil {
+		t.Fatalf("GetValues() failed: %v", err)
+	}
+	if vr.SpreadsheetID != "sheet-abc" || vr.Range != "Sheet1!A1:B2" || len(vr.Values) != 2 || vr.Values[1][0] != "Alice" {
+		t.Fatalf("unexpected value range: %+v", vr)
+	}
+}
+
+func TestClientAppendAndUpdateValues(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == "/v4/spreadsheets/sheet-abc/values/Sheet1!A1:append" {
+			inputOpt := r.URL.Query().Get("valueInputOption")
+			if inputOpt != "USER_ENTERED" {
+				http.Error(w, "unexpected input option: "+inputOpt, http.StatusBadRequest)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"spreadsheetId": "sheet-abc",
+				"updates": map[string]any{
+					"updatedRange":   "Sheet1!A2:B2",
+					"updatedRows":    1,
+					"updatedColumns": 2,
+					"updatedCells":   2,
+				},
+			})
+			return
+		}
+		if r.Method == http.MethodPut && r.URL.Path == "/v4/spreadsheets/sheet-abc/values/Sheet1!A1:B1" {
+			inputOpt := r.URL.Query().Get("valueInputOption")
+			if inputOpt != "RAW" {
+				http.Error(w, "unexpected input option: "+inputOpt, http.StatusBadRequest)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"spreadsheetId":  "sheet-abc",
+				"updatedRange":   "Sheet1!A1:B1",
+				"updatedRows":    1,
+				"updatedColumns": 2,
+				"updatedCells":   2,
+			})
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+
+	ctx := context.Background()
+	cl, err := NewClient(ctx, srv.Client(), option.WithEndpoint(srv.URL+"/"), option.WithoutAuthentication())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	appRes, err := cl.AppendValues(ctx, "sheet-abc", "Sheet1!A1", [][]interface{}{{"test", 123}}, "user_entered")
+	if err != nil {
+		t.Fatalf("AppendValues() failed: %v", err)
+	}
+	if appRes.SpreadsheetID != "sheet-abc" || appRes.UpdatedRange != "Sheet1!A2:B2" || appRes.UpdatedRows != 1 || appRes.UpdatedColumns != 2 || appRes.UpdatedCells != 2 {
+		t.Fatalf("unexpected append result: %+v", appRes)
+	}
+
+	upRes, err := cl.UpdateValues(ctx, "sheet-abc", "Sheet1!A1:B1", [][]interface{}{{"test", 123}}, "raw")
+	if err != nil {
+		t.Fatalf("UpdateValues() failed: %v", err)
+	}
+	if upRes.SpreadsheetID != "sheet-abc" || upRes.UpdatedRange != "Sheet1!A1:B1" || upRes.UpdatedRows != 1 || upRes.UpdatedColumns != 2 || upRes.UpdatedCells != 2 {
+		t.Fatalf("unexpected update result: %+v", upRes)
+	}
+}
+
+func TestClientClearValues(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == "/v4/spreadsheets/sheet-abc/values/Sheet1!A1:B5:clear" {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"spreadsheetId": "sheet-abc",
+				"clearedRange":  "Sheet1!A1:B5",
+			})
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+
+	ctx := context.Background()
+	cl, err := NewClient(ctx, srv.Client(), option.WithEndpoint(srv.URL+"/"), option.WithoutAuthentication())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := cl.ClearValues(ctx, "sheet-abc", "Sheet1!A1:B5"); err != nil {
+		t.Fatalf("ClearValues() failed: %v", err)
+	}
+}
