@@ -4,6 +4,7 @@ package sheets
 import (
 	"context"
 	"encoding/csv"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -283,6 +284,10 @@ func (c *Client) DeleteTab(ctx context.Context, spreadsheetID string, sheetID in
 
 // ExportCSV exports an entire sheet tab to CSV format, writing to outPath or outWriter.
 func (c *Client) ExportCSV(ctx context.Context, spreadsheetID, sheetName, outPath string, outWriter io.Writer) error {
+	if outPath == "" && outWriter == nil {
+		return errors.New("outPath or outWriter must be provided")
+	}
+
 	targetSheet := sheetName
 	if targetSheet == "" {
 		meta, err := c.GetMetadata(ctx, spreadsheetID)
