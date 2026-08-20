@@ -3,7 +3,11 @@ package sheets
 
 import (
 	"context"
+	"encoding/csv"
+	"fmt"
+	"io"
 	"net/http"
+	"os"
 	"strings"
 
 	"google.golang.org/api/option"
@@ -206,3 +210,145 @@ func (c *Client) ClearValues(ctx context.Context, spreadsheetID, clearRange stri
 	_, err := c.svc.Spreadsheets.Values.Clear(spreadsheetID, clearRange, req).Context(ctx).Do()
 	return err
 }
+
+// AddTab adds a new worksheet tab to a spreadsheet.
+func (c *Client) AddTab(ctx context.Context, spreadsheetID, title string, index, rows, cols int64) (*TabResult, error) {
+	if rows <= 0 {
+		rows = 1000
+	}
+	if cols <= 0 {
+		cols = 26
+	}
+
+	sheetProps := &sheetsapi.SheetProperties{
+		Title: title,
+		GridProperties: &sheetsapi.GridProperties{
+			RowCount:    rows,
+			ColumnCount: cols,
+		},
+	}
+	if index >= 0 {
+		sheetProps.Index = index
+	}
+
+	req := &sheetsapi.BatchUpdateSpreadsheetRequest{
+		Requests: []*sheetsapi.Request{
+			{
+				AddSheet: &sheetsapi.AddSheetRequest{
+					Properties: sheetProps,
+				},
+			},
+		},
+	}
+
+	res, err := c.svc.Spreadsheets.BatchUpdate(spreadsheetID, req).Context(ctx).Do()
+	if err != nil {
+		return nil, err
+	}
+
+	result := &TabResult{
+		Title:       title,
+		Index:       index,
+		RowCount:    rows,
+		ColumnCount: cols,
+	}
+	if len(res.Replies) > 0 && res.Replies[0].AddSheet != nil && res.Replies[0].AddSheet.Properties != nil {
+		p := res.Replies[0].AddSheet.Properties
+		result.SheetID = p.SheetId
+		result.Title = p.Title
+		result.Index = p.Index
+		if p.GridProperties != nil {
+			result.RowCount = p.GridProperties.RowCount
+			result.ColumnCount = p.GridProperties.ColumnCount
+		}
+	}
+	return result, nil
+}
+
+// DeleteTab deletes a tab by its integer sheetId.
+func (c *Client) DeleteTab(ctx context.Context, spreadsheetID string, sheetID int64) error {
+	req := &sheetsapi.BatchUpdateSpreadsheetRequest{
+		Requests: []*sheetsapi.Request{
+			{
+				DeleteSheet: &sheetsapi.DeleteSheetRequest{
+					SheetId: sheetID,
+				},
+			},
+		},
+	}
+
+	_, err := c.svc.Spreadsheets.BatchUpdate(spreadsheetID, req).Context(ctx).Do()
+	return err
+}
+
+// ExportCSV exports an entire sheet tab to CSV format, writing to outPath or outWriter.
+func (c *Client) ExportCSV(ctx context.Context, spreadsheetID, sheetName, outPath string, outWriter io.Writer) error {
+	targetSheet := sheetName
+	if targetSheet == "" {
+		meta, err := c.GetMetadata(ctx, spreadsheetID)
+		if err != nil {
+			return err
+		}
+		if len(meta.Sheets) == 0 {
+			return fmt.Errorf("spreadsheet %q has no sheets to export", spreadsheetID)
+		}
+		targetSheet = meta.Sheets[0].Title
+	}
+
+	// Fetch all values from the sheet
+	readRange := targetSheet
+	if !strings.Contains(targetSheet, "!") {
+		readRange = fmt.Sprintf("'%s'", strings.ReplaceAll(targetSheet, "'", "''"))
+	}
+	vr, err := c.GetValues(ctx, spreadsheetID, readRange, "formatted")
+	if err != nil {
+		return err
+	}
+
+	var w io.Writer = outWriter
+	var targetFile *os.File
+	if outPath != "" {
+		cleaned := CleanPath(outPath)
+		f, err := os.Create(cleaned)
+		if err != nil {
+			return fmt.Errorf("failed to create output file: %w", err)
+		}
+		targetFile = f
+		w = f
+		defer func() {
+			if targetFile != nil {
+				_ = targetFile.Close()
+			}
+		}()
+	}
+
+	csvWriter := csv.NewWriter(w)
+	for _, row := range vr.Values {
+		strRow := make([]string, len(row))
+		for i, cell := range row {
+			if cell != nil {
+				strRow[i] = fmt.Sprintf("%v", cell)
+			}
+		}
+		if err := csvWriter.Write(strRow); err != nil {
+			if targetFile != nil {
+				_ = targetFile.Close()
+				targetFile = nil
+				_ = os.Remove(CleanPath(outPath))
+			}
+			return fmt.Errorf("failed to write CSV row: %w", err)
+		}
+	}
+	csvWriter.Flush()
+	if err := csvWriter.Error(); err != nil {
+		if targetFile != nil {
+			_ = targetFile.Close()
+			targetFile = nil
+			_ = os.Remove(CleanPath(outPath))
+		}
+		return fmt.Errorf("failed to flush CSV writer: %w", err)
+	}
+
+	return nil
+}
+

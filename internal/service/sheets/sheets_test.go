@@ -6,6 +6,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"google.golang.org/api/option"
@@ -309,3 +312,267 @@ func TestClientClearValues(t *testing.T) {
 		t.Fatalf("ClearValues() failed: %v", err)
 	}
 }
+
+func TestClientAddAndDeleteTab(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v4/spreadsheets/sheet-tab-test:batchUpdate" {
+			http.NotFound(w, r)
+			return
+		}
+		var req map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		requests, _ := req["requests"].([]any)
+		if len(requests) == 0 {
+			http.Error(w, "empty requests", http.StatusBadRequest)
+			return
+		}
+		firstReq := requests[0].(map[string]any)
+		if addSheet, ok := firstReq["addSheet"].(map[string]any); ok {
+			props := addSheet["properties"].(map[string]any)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"spreadsheetId": "sheet-tab-test",
+				"replies": []any{
+					map[string]any{
+						"addSheet": map[string]any{
+							"properties": map[string]any{
+								"sheetId": 999,
+								"title":   props["title"],
+								"index":   props["index"],
+								"gridProperties": map[string]any{
+									"rowCount":    1000,
+									"columnCount": 26,
+								},
+							},
+						},
+					},
+				},
+			})
+			return
+		}
+		if _, ok := firstReq["deleteSheet"].(map[string]any); ok {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"spreadsheetId": "sheet-tab-test",
+				"replies":       []any{map[string]any{}},
+			})
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+
+	ctx := context.Background()
+	cl, err := NewClient(ctx, srv.Client(), option.WithEndpoint(srv.URL+"/"), option.WithoutAuthentication())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tab, err := cl.AddTab(ctx, "sheet-tab-test", "NewTab", 1, 1000, 26)
+	if err != nil {
+		t.Fatalf("AddTab() failed: %v", err)
+	}
+	if tab.SheetID != 999 || tab.Title != "NewTab" || tab.RowCount != 1000 || tab.ColumnCount != 26 {
+		t.Fatalf("unexpected tab result: %+v", tab)
+	}
+
+	if err := cl.DeleteTab(ctx, "sheet-tab-test", 999); err != nil {
+		t.Fatalf("DeleteTab() failed: %v", err)
+	}
+}
+
+func TestClientExportCSV(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v4/spreadsheets/sheet-export" {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"spreadsheetId": "sheet-export",
+				"sheets": []map[string]any{
+					{
+						"properties": map[string]any{
+							"title": "FirstTab",
+						},
+					},
+				},
+			})
+			return
+		}
+		if r.URL.Path == "/v4/spreadsheets/sheet-export/values/'FirstTab'" ||
+			r.URL.Path == "/v4/spreadsheets/sheet-export/values/FirstTab" {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"range": "FirstTab!A1:B2",
+				"values": []any{
+					[]any{"HeaderA", "HeaderB"},
+					[]any{"Val1", "Val2"},
+				},
+			})
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+
+	ctx := context.Background()
+	cl, err := NewClient(ctx, srv.Client(), option.WithEndpoint(srv.URL+"/"), option.WithoutAuthentication())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Test export to writer
+	var buf strings.Builder
+	if err := cl.ExportCSV(ctx, "sheet-export", "", "", &buf); err != nil {
+		t.Fatalf("ExportCSV() to writer failed: %v", err)
+	}
+	wantCSV := "HeaderA,HeaderB\nVal1,Val2\n"
+	if buf.String() != wantCSV {
+		t.Fatalf("got CSV %q, want %q", buf.String(), wantCSV)
+	}
+
+	// Test export to file
+	tmpDir := t.TempDir()
+	outFile := filepath.Join(tmpDir, "exported.csv")
+	if err := cl.ExportCSV(ctx, "sheet-export", "FirstTab", outFile, nil); err != nil {
+		t.Fatalf("ExportCSV() to file failed: %v", err)
+	}
+	data, err := os.ReadFile(outFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != wantCSV {
+		t.Fatalf("file content = %q, want %q", string(data), wantCSV)
+	}
+}
+
+func TestClientExportCSV_EmptySpreadsheet(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v4/spreadsheets/sheet-empty" {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"spreadsheetId": "sheet-empty",
+				"sheets":        []map[string]any{},
+			})
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+
+	ctx := context.Background()
+	cl, err := NewClient(ctx, srv.Client(), option.WithEndpoint(srv.URL+"/"), option.WithoutAuthentication())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var buf strings.Builder
+	err = cl.ExportCSV(ctx, "sheet-empty", "", "", &buf)
+	if err == nil {
+		t.Fatalf("expected error exporting empty spreadsheet, got nil")
+	}
+}
+
+func TestClientAddTab_Defaults(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		requests := req["requests"].([]any)
+		firstReq := requests[0].(map[string]any)
+		addSheet := firstReq["addSheet"].(map[string]any)
+		props := addSheet["properties"].(map[string]any)
+
+		// Verify default rows and cols
+		grid := props["gridProperties"].(map[string]any)
+		if grid["rowCount"].(float64) != 1000 || grid["columnCount"].(float64) != 26 {
+			http.Error(w, "invalid grid defaults", http.StatusBadRequest)
+			return
+		}
+		if _, hasIndex := props["index"]; hasIndex {
+			http.Error(w, "index should not be set when negative", http.StatusBadRequest)
+			return
+		}
+
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"spreadsheetId": "sheet-tab-test",
+			"replies": []any{
+				map[string]any{
+					"addSheet": map[string]any{
+						"properties": map[string]any{
+							"sheetId": 123,
+							"title":   props["title"],
+						},
+					},
+				},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	ctx := context.Background()
+	cl, err := NewClient(ctx, srv.Client(), option.WithEndpoint(srv.URL+"/"), option.WithoutAuthentication())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tab, err := cl.AddTab(ctx, "sheet-tab-test", "DefaultTab", -1, 0, 0)
+	if err != nil {
+		t.Fatalf("AddTab() failed: %v", err)
+	}
+	if tab.SheetID != 123 || tab.Title != "DefaultTab" || tab.RowCount != 1000 || tab.ColumnCount != 26 {
+		t.Fatalf("unexpected tab result: %+v", tab)
+	}
+}
+
+func TestClientExportCSV_SpecialTabName(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v4/spreadsheets/sheet-special/values/'John''s Data'" {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"range": "'John''s Data'!A1:A2",
+				"values": []any{
+					[]any{"Score"},
+					[]any{"99"},
+				},
+			})
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+
+	ctx := context.Background()
+	cl, err := NewClient(ctx, srv.Client(), option.WithEndpoint(srv.URL+"/"), option.WithoutAuthentication())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var buf strings.Builder
+	if err := cl.ExportCSV(ctx, "sheet-special", "John's Data", "", &buf); err != nil {
+		t.Fatalf("ExportCSV() with quotes failed: %v", err)
+	}
+	if buf.String() != "Score\n99\n" {
+		t.Fatalf("got %q, want %q", buf.String(), "Score\n99\n")
+	}
+}
+
+func TestClientExportCSV_InvalidFile(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"range": "Sheet1!A1",
+			"values": []any{
+				[]any{"test"},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	ctx := context.Background()
+	cl, err := NewClient(ctx, srv.Client(), option.WithEndpoint(srv.URL+"/"), option.WithoutAuthentication())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Non-existent directory should fail file creation
+	err = cl.ExportCSV(ctx, "sheet-123", "Sheet1", "/nonexistent_dir/never_create/test.csv", nil)
+	if err == nil {
+		t.Fatalf("expected error for invalid file path, got nil")
+	}
+}
+
+
