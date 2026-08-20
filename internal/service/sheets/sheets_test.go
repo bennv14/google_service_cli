@@ -575,4 +575,16 @@ func TestClientExportCSV_InvalidFile(t *testing.T) {
 	}
 }
 
+func TestClientExportCSV_NoDestination(t *testing.T) {
+	ctx := context.Background()
+	cl := &Client{}
+	err := cl.ExportCSV(ctx, "sheet-123", "Sheet1", "", nil)
+	if err == nil {
+		t.Fatalf("expected error when neither outPath nor outWriter is provided, got nil")
+	}
+	if !strings.Contains(err.Error(), "outPath or outWriter must be provided") {
+		t.Fatalf("expected 'outPath or outWriter must be provided' error, got %v", err)
+	}
+}
+
 
