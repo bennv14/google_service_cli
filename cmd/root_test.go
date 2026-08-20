@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"io"
+	"slices"
 	"strings"
 	"testing"
 
@@ -165,3 +166,29 @@ func TestRootRegistersChat(t *testing.T) {
 		t.Fatalf("root help missing chat:\n%s", buf.String())
 	}
 }
+
+func TestSheetsServiceRegistered(t *testing.T) {
+	root, deps := buildRootCmdWithDeps()
+	var found bool
+	for _, cmd := range root.Commands() {
+		if cmd.Name() == "sheets" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("expected 'sheets' command to be registered on root command")
+	}
+
+	scopes := serviceScopes(services)
+	if !slices.Contains(scopes, "https://www.googleapis.com/auth/spreadsheets") {
+		t.Fatal("expected spreadsheets scope to be in serviceScopes")
+	}
+	if !slices.Contains(scopes, "https://www.googleapis.com/auth/spreadsheets.readonly") {
+		t.Fatal("expected spreadsheets.readonly scope to be in serviceScopes")
+	}
+	if deps == nil {
+		t.Fatal("expected deps to be non-nil")
+	}
+}
+

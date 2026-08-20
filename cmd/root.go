@@ -18,11 +18,16 @@ import (
 	"github.com/bennv14/google_service_cli/internal/service"
 	"github.com/bennv14/google_service_cli/internal/service/chat"
 	"github.com/bennv14/google_service_cli/internal/service/drive"
+	"github.com/bennv14/google_service_cli/internal/service/sheets"
 )
 
 // services is the service registry. Adding a service here wires up both its
 // command subtree and its OAuth scopes.
-var services = []service.Service{drive.New(), chat.New()}
+var services = []service.Service{
+	drive.New(),
+	chat.New(),
+	sheets.New(),
+}
 
 // serviceScopes returns the deduplicated, sorted union of every service's scopes.
 func serviceScopes(svcs []service.Service) []string {
