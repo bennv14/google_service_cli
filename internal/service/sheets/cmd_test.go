@@ -423,3 +423,55 @@ func TestCommandErrors(t *testing.T) {
 	}
 }
 
+func TestFriendlyErrors(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path := r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		if strings.Contains(path, "404") {
+			w.WriteHeader(http.StatusNotFound)
+			w.Write([]byte(`{"error":{"code":404,"message":"Requested entity was not found."}}`))
+			return
+		}
+		if strings.Contains(path, "403") {
+			w.WriteHeader(http.StatusForbidden)
+			w.Write([]byte(`{"error":{"code":403,"message":"The caller does not have permission"}}`))
+			return
+		}
+		if strings.Contains(path, "400") {
+			w.WriteHeader(http.StatusBadRequest)
+			w.Write([]byte(`{"error":{"code":400,"message":"Unable to parse range: InvalidRange"}}`))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+
+	var buf bytes.Buffer
+	deps := setupTestDeps(srv, "json", &buf)
+	defer func() { testClientOpts = nil }()
+
+	// Test 404
+	cmd := New().Command(deps)
+	cmd.SetArgs([]string{"info", "404-id"})
+	err := cmd.ExecuteContext(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "spreadsheet not found (verify spreadsheet ID)") {
+		t.Fatalf("expected 404 friendly error, got: %v", err)
+	}
+
+	// Test 403
+	cmd = New().Command(deps)
+	cmd.SetArgs([]string{"info", "403-id"})
+	err = cmd.ExecuteContext(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "permission denied (ensure your account has access to this spreadsheet)") {
+		t.Fatalf("expected 403 friendly error, got: %v", err)
+	}
+
+	// Test 400
+	cmd = New().Command(deps)
+	cmd.SetArgs([]string{"get", "400-id", "InvalidRange"})
+	err = cmd.ExecuteContext(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "invalid range notation") {
+		t.Fatalf("expected 400 friendly error, got: %v", err)
+	}
+}
+
