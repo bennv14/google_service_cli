@@ -107,13 +107,17 @@ func TestChatServiceNameAndScopes(t *testing.T) {
 	if s.Name() != "chat" {
 		t.Fatalf("Name() = %q", s.Name())
 	}
-	if len(s.Scopes()) != 4 {
+	if len(s.Scopes()) != 5 {
 		t.Fatalf("Scopes() = %v", s.Scopes())
 	}
+	hasWrite := false
 	for _, sc := range s.Scopes() {
-		if !strings.HasSuffix(sc, ".readonly") {
-			t.Errorf("scope %q is not read-only", sc)
+		if sc == chatapi.ChatMessagesScope {
+			hasWrite = true
 		}
+	}
+	if !hasWrite {
+		t.Errorf("Scopes() %v missing %q", s.Scopes(), chatapi.ChatMessagesScope)
 	}
 }
 
