@@ -93,6 +93,10 @@ var (
 	_ output.TextView  = SpaceList{}
 	_ output.TextView  = SingleMessage{}
 	_ output.TableView = SingleMessage{}
+	_ output.TextView  = DeleteResult{}
+	_ output.TableView = DeleteResult{}
+	_ output.TextView  = ReactionResult{}
+	_ output.TableView = ReactionResult{}
 )
 
 // Text renders the result as a tree: space → thread → message → body.
@@ -392,3 +396,18 @@ func (sm SingleMessage) Text(w io.Writer) error {
 	return bw.Flush()
 }
 
+// Text renders a message deletion confirmation.
+func (dr DeleteResult) Text(w io.Writer) error {
+	_, err := fmt.Fprintf(w, "Deleted message %s\n", dr.ID)
+	return err
+}
+
+// Text renders an emoji reaction add/remove confirmation.
+func (rr ReactionResult) Text(w io.Writer) error {
+	if rr.Action == "removed" {
+		_, err := fmt.Fprintf(w, "Removed %s reaction from %s\n", rr.Emoji, rr.MessageID)
+		return err
+	}
+	_, err := fmt.Fprintf(w, "Added %s reaction to %s\n", rr.Emoji, rr.MessageID)
+	return err
+}
