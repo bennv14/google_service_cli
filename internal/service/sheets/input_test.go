@@ -132,6 +132,60 @@ func TestParseValuesEmptyReaderFallsBackToArgs(t *testing.T) {
 	}
 }
 
+func TestParseValuesEmptyOSFileFallsBackToArgs(t *testing.T) {
+	tmpDir := t.TempDir()
+	emptyFile := filepath.Join(tmpDir, "empty.csv")
+	if err := os.WriteFile(emptyFile, nil, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	f, err := os.Open(emptyFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	vals, err := ParseValues("", []string{"fallback", "arg"}, f)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	expected := [][]interface{}{
+		{"fallback", "arg"},
+	}
+	if !reflect.DeepEqual(vals, expected) {
+		t.Fatalf("got %v, want %v", vals, expected)
+	}
+}
+
+func TestParseValuesEmptyOSFileNoArgsError(t *testing.T) {
+	tmpDir := t.TempDir()
+	emptyFile := filepath.Join(tmpDir, "empty.csv")
+	if err := os.WriteFile(emptyFile, nil, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	f, err := os.Open(emptyFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	if _, err := ParseValues("", nil, f); err == nil {
+		t.Fatal("expected error for empty stdin file with no args")
+	}
+}
+
+func TestParseValuesInvalidCSVReaderReturnsParseError(t *testing.T) {
+	r := strings.NewReader(`"unclosed quote,val2`)
+	_, err := ParseValues("", []string{"arg1"}, r)
+	if err == nil {
+		t.Fatal("expected CSV parse error, got nil")
+	}
+	if !strings.Contains(err.Error(), "failed to parse CSV") {
+		t.Fatalf("expected 'failed to parse CSV' error, got: %v", err)
+	}
+}
+
 func TestParseValuesNoInputError(t *testing.T) {
 	_, err := ParseValues("", nil, nil)
 	if err == nil {

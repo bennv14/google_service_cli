@@ -111,30 +111,37 @@ func (c *Client) GetMetadata(ctx context.Context, spreadsheetID string) (*Spread
 }
 
 // resolveRenderOption maps friendly strings to Sheets API ValueRenderOption enum values.
-func resolveRenderOption(opt string) string {
+func resolveRenderOption(opt string) (string, error) {
 	switch strings.ToLower(opt) {
+	case "", "formatted":
+		return "FORMATTED_VALUE", nil
 	case "unformatted":
-		return "UNFORMATTED_VALUE"
+		return "UNFORMATTED_VALUE", nil
 	case "formula":
-		return "FORMULA"
+		return "FORMULA", nil
 	default:
-		return "FORMATTED_VALUE"
+		return "", fmt.Errorf("invalid --render %q: use formatted, unformatted, or formula", opt)
 	}
 }
 
 // resolveInputOption maps friendly strings to Sheets API ValueInputOption enum values.
-func resolveInputOption(opt string) string {
+func resolveInputOption(opt string) (string, error) {
 	switch strings.ToLower(opt) {
+	case "", "user_entered":
+		return "USER_ENTERED", nil
 	case "raw":
-		return "RAW"
+		return "RAW", nil
 	default:
-		return "USER_ENTERED"
+		return "", fmt.Errorf("invalid --input-type %q: use user_entered or raw", opt)
 	}
 }
 
 // GetValues reads cell values in the specified A1 range.
 func (c *Client) GetValues(ctx context.Context, spreadsheetID, readRange, renderOption string) (*ValueRange, error) {
-	render := resolveRenderOption(renderOption)
+	render, err := resolveRenderOption(renderOption)
+	if err != nil {
+		return nil, err
+	}
 	call := c.svc.Spreadsheets.Values.Get(spreadsheetID, readRange).
 		ValueRenderOption(render).
 		Context(ctx)
@@ -154,7 +161,10 @@ func (c *Client) GetValues(ctx context.Context, spreadsheetID, readRange, render
 
 // AppendValues appends rows of data after existing data in the specified range.
 func (c *Client) AppendValues(ctx context.Context, spreadsheetID, writeRange string, values [][]interface{}, inputOption string) (*UpdateResult, error) {
-	inputOpt := resolveInputOption(inputOption)
+	inputOpt, err := resolveInputOption(inputOption)
+	if err != nil {
+		return nil, err
+	}
 	vr := &sheetsapi.ValueRange{
 		Values: values,
 	}
@@ -182,7 +192,10 @@ func (c *Client) AppendValues(ctx context.Context, spreadsheetID, writeRange str
 
 // UpdateValues writes or overwrites values in a specified cell range.
 func (c *Client) UpdateValues(ctx context.Context, spreadsheetID, writeRange string, values [][]interface{}, inputOption string) (*UpdateResult, error) {
-	inputOpt := resolveInputOption(inputOption)
+	inputOpt, err := resolveInputOption(inputOption)
+	if err != nil {
+		return nil, err
+	}
 	vr := &sheetsapi.ValueRange{
 		Values: values,
 	}
@@ -301,11 +314,8 @@ func (c *Client) ExportCSV(ctx context.Context, spreadsheetID, sheetName, outPat
 		targetSheet = meta.Sheets[0].Title
 	}
 
-	// Fetch all values from the sheet
-	readRange := targetSheet
-	if !strings.Contains(targetSheet, "!") {
-		readRange = fmt.Sprintf("'%s'", strings.ReplaceAll(targetSheet, "'", "''"))
-	}
+	// Always quote the sheet title so names containing '!' or spaces remain valid A1 notation.
+	readRange := fmt.Sprintf("'%s'", strings.ReplaceAll(targetSheet, "'", "''"))
 	vr, err := c.GetValues(ctx, spreadsheetID, readRange, "formatted")
 	if err != nil {
 		return err
@@ -354,7 +364,14 @@ func (c *Client) ExportCSV(ctx context.Context, spreadsheetID, sheetName, outPat
 		}
 		return fmt.Errorf("failed to flush CSV writer: %w", err)
 	}
+	if targetFile != nil {
+		if err := targetFile.Close(); err != nil {
+			targetFile = nil
+			_ = os.Remove(CleanPath(outPath))
+			return fmt.Errorf("failed to close output file: %w", err)
+		}
+		targetFile = nil
+	}
 
 	return nil
 }
-

@@ -31,6 +31,14 @@ func TestSpreadsheetMetaTableView(t *testing.T) {
 	if !strings.Contains(string(data), `"spreadsheetId":"sheet-123"`) {
 		t.Fatalf("json missing spreadsheetId: %s", string(data))
 	}
+
+	var buf bytes.Buffer
+	if err := meta.Text(&buf); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(buf.String(), "Q3 Budget") || !strings.Contains(buf.String(), "sheet-123") {
+		t.Fatalf("unexpected text output: %s", buf.String())
+	}
 }
 
 func TestSpreadsheetInfoTableViewAndTextView(t *testing.T) {
@@ -94,6 +102,15 @@ func TestValueRangeTableView(t *testing.T) {
 	if len(emptyVR.Headers()) != 0 || len(emptyVR.Rows()) != 0 {
 		t.Fatalf("expected empty headers and rows for empty ValueRange")
 	}
+
+	// Text rendering
+	var buf bytes.Buffer
+	if err := vr.Text(&buf); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(buf.String(), "Header1\tHeader2\tHeader3") || !strings.Contains(buf.String(), "val1\t42\ttrue") {
+		t.Fatalf("unexpected ValueRange text output: %s", buf.String())
+	}
 }
 
 func TestUpdateResultTableView(t *testing.T) {
@@ -114,6 +131,14 @@ func TestUpdateResultTableView(t *testing.T) {
 	if len(rows) != 1 || rows[0][0] != "Sheet1!A1:B5" || rows[0][1] != "5" || rows[0][2] != "2" || rows[0][3] != "10" {
 		t.Fatalf("unexpected rows: %v", rows)
 	}
+
+	var buf bytes.Buffer
+	if err := ur.Text(&buf); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(buf.String(), "Sheet1!A1:B5") || !strings.Contains(buf.String(), "10 cells") {
+		t.Fatalf("unexpected UpdateResult text output: %s", buf.String())
+	}
 }
 
 func TestTabResultTableView(t *testing.T) {
@@ -133,6 +158,14 @@ func TestTabResultTableView(t *testing.T) {
 	rows := tr.Rows()
 	if len(rows) != 1 || rows[0][0] != "202" || rows[0][1] != "Summary" || rows[0][2] != "2" || rows[0][3] != "1000x26" {
 		t.Fatalf("unexpected rows: %v", rows)
+	}
+
+	var buf bytes.Buffer
+	if err := tr.Text(&buf); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(buf.String(), "Summary") || !strings.Contains(buf.String(), "202") {
+		t.Fatalf("unexpected TabResult text output: %s", buf.String())
 	}
 }
 

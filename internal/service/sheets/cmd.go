@@ -64,6 +64,14 @@ func friendlyErr(err error) error {
 		case 404:
 			return fmt.Errorf("spreadsheet not found (verify spreadsheet ID): %w", err)
 		case 403:
+			msg := strings.ToLower(gErr.Message)
+			if strings.Contains(msg, "has not been used in project") || strings.Contains(msg, "service_disabled") {
+				return fmt.Errorf("the Google Sheets API is not enabled for this OAuth client's GCP project: %w", err)
+			}
+			fErr := gerr.Friendly(err)
+			if !strings.HasPrefix(fErr.Error(), "permission denied (check auth/scopes):") {
+				return fErr
+			}
 			return fmt.Errorf("permission denied (ensure your account has access to this spreadsheet): %w", err)
 		case 400:
 			msg := strings.ToLower(gErr.Message)
@@ -135,6 +143,9 @@ func getCmd(d *service.Deps) *cobra.Command {
 		Short:   "Retrieve cell values within a specified range",
 		Args:    cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if _, err := resolveRenderOption(render); err != nil {
+				return err
+			}
 			ctx := cmd.Context()
 			cl, err := client(ctx, d, ScopeReadonly)
 			if err != nil {
@@ -151,26 +162,32 @@ func getCmd(d *service.Deps) *cobra.Command {
 	return c
 }
 
-func appendCmd(d *service.Deps) *cobra.Command {
+type valueWriteFunc func(ctx context.Context, spreadsheetID, writeRange string, values [][]interface{}, inputOption string) (*UpdateResult, error)
+
+func valueWriteCmd(d *service.Deps, use string, aliases []string, short string, fn func(*Client) valueWriteFunc) *cobra.Command {
 	var (
 		filePath  string
 		inputType string
 	)
 	c := &cobra.Command{
-		Use:   "append <spreadsheetId> <range> [values...]",
-		Short: "Append rows of data after existing content in a sheet",
-		Args:  cobra.MinimumNArgs(2),
+		Use:     use,
+		Aliases: aliases,
+		Short:   short,
+		Args:    cobra.MinimumNArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx := cmd.Context()
-			cl, err := client(ctx, d, ScopeSpreadsheets)
-			if err != nil {
+			if _, err := resolveInputOption(inputType); err != nil {
 				return err
 			}
 			vals, err := ParseValues(filePath, args[2:], cmd.InOrStdin())
 			if err != nil {
 				return err
 			}
-			res, err := cl.AppendValues(ctx, args[0], args[1], vals, inputType)
+			ctx := cmd.Context()
+			cl, err := client(ctx, d, ScopeSpreadsheets)
+			if err != nil {
+				return err
+			}
+			res, err := fn(cl)(ctx, args[0], args[1], vals, inputType)
 			if err != nil {
 				return friendlyErr(err)
 			}
@@ -182,36 +199,22 @@ func appendCmd(d *service.Deps) *cobra.Command {
 	return c
 }
 
-func updateCmd(d *service.Deps) *cobra.Command {
-	var (
-		filePath  string
-		inputType string
+func appendCmd(d *service.Deps) *cobra.Command {
+	return valueWriteCmd(d,
+		"append <spreadsheetId> <range> [values...]",
+		nil,
+		"Append rows of data after existing content in a sheet",
+		func(cl *Client) valueWriteFunc { return cl.AppendValues },
 	)
-	c := &cobra.Command{
-		Use:     "update <spreadsheetId> <range> [values...]",
-		Aliases: []string{"write"},
-		Short:   "Write or overwrite cell values in a specified range",
-		Args:  cobra.MinimumNArgs(2),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx := cmd.Context()
-			cl, err := client(ctx, d, ScopeSpreadsheets)
-			if err != nil {
-				return err
-			}
-			vals, err := ParseValues(filePath, args[2:], cmd.InOrStdin())
-			if err != nil {
-				return err
-			}
-			res, err := cl.UpdateValues(ctx, args[0], args[1], vals, inputType)
-			if err != nil {
-				return friendlyErr(err)
-			}
-			return d.Out.Render(res)
-		},
-	}
-	c.Flags().StringVarP(&filePath, "file", "f", "", "read rows from a local CSV file")
-	c.Flags().StringVar(&inputType, "input-type", "user_entered", "input value type: user_entered | raw")
-	return c
+}
+
+func updateCmd(d *service.Deps) *cobra.Command {
+	return valueWriteCmd(d,
+		"update <spreadsheetId> <range> [values...]",
+		[]string{"write"},
+		"Write or overwrite cell values in a specified range",
+		func(cl *Client) valueWriteFunc { return cl.UpdateValues },
+	)
 }
 
 func clearCmd(d *service.Deps) *cobra.Command {
