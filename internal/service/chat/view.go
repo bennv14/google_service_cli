@@ -236,6 +236,37 @@ func (sm SingleMessage) Rows() [][]string {
 	}}
 }
 
+// DeleteResult is the output of `gsvc chat delete <id>`.
+type DeleteResult struct {
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Deleted bool   `json:"deleted"`
+}
+
+func (dr DeleteResult) Headers() []string { return []string{"ID", "STATUS"} }
+
+func (dr DeleteResult) Rows() [][]string {
+	status := "not deleted"
+	if dr.Deleted {
+		status = "deleted"
+	}
+	return [][]string{{dr.ID, status}}
+}
+
+// ReactionResult is the output of `gsvc chat react <id> <emoji>`.
+type ReactionResult struct {
+	Action    string `json:"action"`
+	Emoji     string `json:"emoji"`
+	MessageID string `json:"messageId"`
+	Name      string `json:"name"`
+}
+
+func (rr ReactionResult) Headers() []string { return []string{"ACTION", "EMOJI", "MESSAGE"} }
+
+func (rr ReactionResult) Rows() [][]string {
+	return [][]string{{rr.Action, rr.Emoji, rr.MessageID}}
+}
+
 // plural renders "1 space" / "2 spaces".
 func plural(n int, one, many string) string {
 	if n == 1 {

@@ -224,3 +224,89 @@ func TestSingleMessageOutput(t *testing.T) {
 	}
 }
 
+func TestDeleteResultViews(t *testing.T) {
+	dr := DeleteResult{
+		ID:      "A/t1/m1",
+		Name:    "spaces/A/messages/t1.m1",
+		Deleted: true,
+	}
+
+	b, err := json.Marshal(dr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["id"] != "A/t1/m1" || got["name"] != "spaces/A/messages/t1.m1" || got["deleted"] != true {
+		t.Fatalf("JSON = %v", got)
+	}
+
+	if h := dr.Headers(); len(h) != 2 || h[0] != "ID" || h[1] != "STATUS" {
+		t.Fatalf("Headers = %v", h)
+	}
+	rows := dr.Rows()
+	if len(rows) != 1 || rows[0][0] != "A/t1/m1" || rows[0][1] != "deleted" {
+		t.Fatalf("Rows = %v", rows)
+	}
+
+	var buf strings.Builder
+	if err := dr.Text(&buf); err != nil {
+		t.Fatal(err)
+	}
+	if buf.String() != "Deleted message A/t1/m1\n" {
+		t.Fatalf("Text = %q, want %q", buf.String(), "Deleted message A/t1/m1\n")
+	}
+}
+
+func TestReactionResultViews(t *testing.T) {
+	added := ReactionResult{
+		Action:    "added",
+		Emoji:     "👍",
+		MessageID: "A/t1/m1",
+		Name:      "spaces/A/messages/t1.m1/reactions/r1",
+	}
+
+	b, err := json.Marshal(added)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["action"] != "added" || got["emoji"] != "👍" || got["messageId"] != "A/t1/m1" || got["name"] != "spaces/A/messages/t1.m1/reactions/r1" {
+		t.Fatalf("JSON = %v", got)
+	}
+
+	if h := added.Headers(); len(h) != 3 || h[0] != "ACTION" || h[1] != "EMOJI" || h[2] != "MESSAGE" {
+		t.Fatalf("Headers = %v", h)
+	}
+	rows := added.Rows()
+	if len(rows) != 1 || rows[0][0] != "added" || rows[0][1] != "👍" || rows[0][2] != "A/t1/m1" {
+		t.Fatalf("Rows = %v", rows)
+	}
+
+	var buf strings.Builder
+	if err := added.Text(&buf); err != nil {
+		t.Fatal(err)
+	}
+	if buf.String() != "Added 👍 reaction to A/t1/m1\n" {
+		t.Fatalf("added Text = %q", buf.String())
+	}
+
+	removed := ReactionResult{
+		Action:    "removed",
+		Emoji:     "👍",
+		MessageID: "A/t1/m1",
+		Name:      "spaces/A/messages/t1.m1/reactions/r1",
+	}
+	buf.Reset()
+	if err := removed.Text(&buf); err != nil {
+		t.Fatal(err)
+	}
+	if buf.String() != "Removed 👍 reaction from A/t1/m1\n" {
+		t.Fatalf("removed Text = %q", buf.String())
+	}
+}
