@@ -1296,4 +1296,25 @@ func TestEngineMessageFetchesAndResolvesSingleMessage(t *testing.T) {
 	}
 }
 
+func TestParseUserID(t *testing.T) {
+	cases := []struct {
+		in     string
+		wantID string
+		wantOK bool
+	}{
+		{"users/123456789/spaces/A/spaceReadState", "users/123456789", true},
+		{"users/me/spaces/A/spaceReadState", "", false},
+		{"users/", "", false},
+		{"spaces/A", "", false},
+		{"", "", false},
+	}
+	for _, c := range cases {
+		id, ok := parseUserID(c.in)
+		if id != c.wantID || ok != c.wantOK {
+			t.Errorf("parseUserID(%q) = (%q, %v), want (%q, %v)", c.in, id, ok, c.wantID, c.wantOK)
+		}
+	}
+}
+
+
 

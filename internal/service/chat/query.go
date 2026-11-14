@@ -182,20 +182,30 @@ func buildMessageFilter(since, until time.Time, thread string) string {
 	return strings.Join(parts, " AND ")
 }
 
+type spaceResolver interface {
+	GetSpace(ctx context.Context, name string) (*chatapi.Space, error)
+	FindDirectMessage(ctx context.Context, userRef string) (*chatapi.Space, error)
+	ListSpaces(ctx context.Context) ([]*chatapi.Space, error)
+}
+
+func (e *Engine) resolveSpace(ctx context.Context, ref string) (*chatapi.Space, error) {
+	return resolveSpace(ctx, e.api, ref)
+}
+
 // resolveSpace turns a user-supplied --space value into a Space. A raw
 // "spaces/…" ID is used directly; a value containing "@" is treated as a user
 // and resolved to the DM with them; anything else is matched against display
 // names. Nothing is cached: every command re-resolves, which costs one extra
 // call but never shows a stale answer.
-func (e *Engine) resolveSpace(ctx context.Context, ref string) (*chatapi.Space, error) {
+func resolveSpace(ctx context.Context, api spaceResolver, ref string) (*chatapi.Space, error) {
 	switch {
 	case strings.HasPrefix(ref, "spaces/"):
-		return e.api.GetSpace(ctx, ref)
+		return api.GetSpace(ctx, ref)
 	case strings.Contains(ref, "@"):
-		return e.api.FindDirectMessage(ctx, "users/"+ref)
+		return api.FindDirectMessage(ctx, "users/"+ref)
 	}
 
-	spaces, err := e.api.ListSpaces(ctx)
+	spaces, err := api.ListSpaces(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -421,23 +431,27 @@ func withReadMarker(spaces []*chatapi.Space, readAt map[string]time.Time) []*cha
 	return out
 }
 
-// rememberMe extracts the caller's own ID from a canonical read-state name,
-// "users/123456789/spaces/…/spaceReadState". The API resolves the `me` alias in
-// the response, which is the cheapest way to learn our ID: it needs no scope
-// beyond the read-state one we already hold.
-func (e *Engine) rememberMe(readStateName string) {
+func parseUserID(readStateName string) (string, bool) {
 	rest, ok := strings.CutPrefix(readStateName, "users/")
 	if !ok {
-		return
+		return "", false
 	}
 	id, _, _ := strings.Cut(rest, "/")
 	if id == "" || id == "me" {
+		return "", false
+	}
+	return "users/" + id, true
+}
+
+func (e *Engine) rememberMe(readStateName string) {
+	id, ok := parseUserID(readStateName)
+	if !ok {
 		return
 	}
 	e.meMu.Lock()
 	defer e.meMu.Unlock()
 	if !e.meDone {
-		e.meID, e.meDone = "users/"+id, true
+		e.meID, e.meDone = id, true
 	}
 }
 
