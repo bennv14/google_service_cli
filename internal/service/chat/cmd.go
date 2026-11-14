@@ -25,8 +25,7 @@ var testClientOpts []option.ClientOption
 
 type svc struct{}
 
-// New returns the Chat service. Everything it does is read-only: it never
-// sends, edits, deletes, or marks anything as read.
+// New returns the Chat service.
 func New() service.Service { return &svc{} }
 
 func (s *svc) Name() string { return "chat" }
@@ -36,14 +35,26 @@ func (s *svc) Scopes() []string { return OAuthScopes }
 func (s *svc) Command(d *service.Deps) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "chat",
-		Short: "Read Google Chat messages (read-only)",
-		Long: `Read Google Chat messages from the terminal.
+		Short: "Read and write Google Chat messages",
+		Long: `Read, send, edit, delete, and react to Google Chat messages from the terminal.
 
 Requires a Google Workspace account: the Chat API does not serve consumer
 (@gmail.com) accounts. The Chat API must also be enabled in the GCP project
 behind your OAuth client.`,
 	}
-	cmd.AddCommand(spacesCmd(d), threadsCmd(d), messagesCmd(d), unreadCmd(d), mentionsCmd(d), threadCmd(d), messageCmd(d))
+	cmd.AddCommand(
+		spacesCmd(d),
+		threadsCmd(d),
+		messagesCmd(d),
+		unreadCmd(d),
+		mentionsCmd(d),
+		threadCmd(d),
+		messageCmd(d),
+		sendCmd(d),
+		editCmd(d),
+		deleteCmd(d),
+		reactCmd(d),
+	)
 	return cmd
 }
 
