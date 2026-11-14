@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"time"
 
 	chatapi "google.golang.org/api/chat/v1"
@@ -13,14 +14,13 @@ import (
 	peopleapi "google.golang.org/api/people/v1"
 )
 
-// The four read-only scopes this service ever requests. The three Chat scopes
-// are restricted: in a Testing-mode OAuth consent screen the account must be
-// listed as a test user, and the Chat API must be enabled in the client's GCP
-// project. directory.readonly is what turns users/123456789 into a person's
-// name — the Chat API itself only ever returns the ID.
+// OAuthScopes lists the scopes requested for Google Chat and People directory
+// resolution. ChatMessagesScope enables sending, editing, deleting messages,
+// uploading attachments, and managing reactions.
 var OAuthScopes = []string{
 	chatapi.ChatSpacesReadonlyScope,
 	chatapi.ChatMessagesReadonlyScope,
+	chatapi.ChatMessagesScope,
 	chatapi.ChatUsersReadstateReadonlyScope,
 	peopleapi.DirectoryReadonlyScope,
 }
@@ -31,7 +31,8 @@ const (
 	messageFields = "name,createTime,text,sender(name,displayName,type)," +
 		"thread(name),annotations(type,userMention(type,user(name,displayName)))," +
 		"attachment(name,contentName,contentType,source,attachmentDataRef(resourceName),driveDataRef(driveFileId),downloadUri)"
-	pageSize = 1000
+	pageSize         = 1000
+	reactionPageSize = 100
 
 	// probeFields is all the newest-message probe needs: who sent it.
 	probeFields = "sender(name)"
@@ -43,8 +44,7 @@ const (
 // page tokens can't grow out's backing array without bound.
 const maxPages = 100
 
-// Client wraps the Chat v1 API. It is read-only by construction: no method here
-// calls a mutating endpoint.
+// Client wraps the Chat v1 API.
 type Client struct{ svc *chatapi.Service }
 
 // NewClient builds a Chat client. Extra options are used by tests
@@ -242,5 +242,100 @@ func (c *Client) DownloadMedia(ctx context.Context, resourceName, targetPath str
 		return err
 	}
 	return nil
+}
+
+// CreateMessage sends a new message in parent ("spaces/{id}"). When replyOption
+// is non-empty (e.g. "REPLY_MESSAGE_OR_FAIL"), it is passed as messageReplyOption.
+func (c *Client) CreateMessage(ctx context.Context, parent string, msg *chatapi.Message, replyOption string) (*chatapi.Message, error) {
+	call := c.svc.Spaces.Messages.Create(parent, msg).Context(ctx).Fields(messageFields)
+	if replyOption != "" {
+		call = call.MessageReplyOption(replyOption)
+	}
+	return call.Do()
+}
+
+// PatchMessage updates the text body of an existing message using updateMask=text
+// so existing attachments and metadata are preserved.
+func (c *Client) PatchMessage(ctx context.Context, name string, text string) (*chatapi.Message, error) {
+	return c.svc.Spaces.Messages.Patch(name, &chatapi.Message{Text: text}).
+		UpdateMask("text").
+		Context(ctx).
+		Fields(messageFields).
+		Do()
+}
+
+// DeleteMessage deletes a message by resource name ("spaces/{sid}/messages/{mid}").
+func (c *Client) DeleteMessage(ctx context.Context, name string) error {
+	_, err := c.svc.Spaces.Messages.Delete(name).Context(ctx).Do()
+	return err
+}
+
+// UploadAttachment uploads a local file into parent ("spaces/{id}") and returns
+// its AttachmentDataRef for attaching to a message. Only the sanitized base
+// filename is sent to the Chat API.
+func (c *Client) UploadAttachment(ctx context.Context, parent, filePath string) (*chatapi.AttachmentDataRef, error) {
+	cleaned := filepath.Clean(filePath)
+	f, err := os.Open(cleaned)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	baseName := filepath.Base(cleaned)
+	res, err := c.svc.Media.Upload(parent, &chatapi.UploadAttachmentRequest{
+		Filename: baseName,
+	}).Media(f).Context(ctx).Do()
+	if err != nil {
+		return nil, err
+	}
+	if res == nil || res.AttachmentDataRef == nil {
+		return nil, fmt.Errorf("chat: upload %s returned no attachmentDataRef", baseName)
+	}
+	return res.AttachmentDataRef, nil
+}
+
+// CreateReaction adds a Unicode emoji reaction to parent ("spaces/{sid}/messages/{mid}").
+func (c *Client) CreateReaction(ctx context.Context, parent, unicode string) (*chatapi.Reaction, error) {
+	return c.svc.Spaces.Messages.Reactions.Create(parent, &chatapi.Reaction{
+		Emoji: &chatapi.Emoji{Unicode: unicode},
+	}).Context(ctx).Do()
+}
+
+// ListReactions returns all reactions on parent matching filter, following all pages.
+func (c *Client) ListReactions(ctx context.Context, parent, filter string) ([]*chatapi.Reaction, error) {
+	var out []*chatapi.Reaction
+	token := ""
+	for page := 0; ; page++ {
+		if page >= maxPages {
+			return nil, fmt.Errorf("chat: list reactions exceeded %d pages; refusing to keep paging", maxPages)
+		}
+		call := c.svc.Spaces.Messages.Reactions.List(parent).Context(ctx).
+			PageSize(reactionPageSize)
+		if filter != "" {
+			call = call.Filter(filter)
+		}
+		if token != "" {
+			call = call.PageToken(token)
+		}
+		res, err := call.Do()
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, res.Reactions...)
+		if res.NextPageToken == "" {
+			return out, nil
+		}
+		if res.NextPageToken == token {
+			return nil, fmt.Errorf("chat: list reactions got a repeating page token %q; refusing to keep paging", token)
+		}
+		token = res.NextPageToken
+	}
+}
+
+// DeleteReaction deletes a reaction by resource name
+// ("spaces/{sid}/messages/{mid}/reactions/{rid}").
+func (c *Client) DeleteReaction(ctx context.Context, name string) error {
+	_, err := c.svc.Spaces.Messages.Reactions.Delete(name).Context(ctx).Do()
+	return err
 }
 

@@ -29,10 +29,11 @@ func newTestClient(t *testing.T, h http.HandlerFunc) *Client {
 	return cl
 }
 
-func TestOAuthScopesAreReadOnly(t *testing.T) {
+func TestOAuthScopes(t *testing.T) {
 	want := []string{
 		"https://www.googleapis.com/auth/chat.spaces.readonly",
 		"https://www.googleapis.com/auth/chat.messages.readonly",
+		"https://www.googleapis.com/auth/chat.messages",
 		"https://www.googleapis.com/auth/chat.users.readstate.readonly",
 		"https://www.googleapis.com/auth/directory.readonly",
 	}
