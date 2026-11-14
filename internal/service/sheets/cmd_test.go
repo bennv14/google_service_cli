@@ -204,24 +204,50 @@ func TestClearCommand(t *testing.T) {
 
 func TestAddAndDeleteTabCommands(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"spreadsheetId": "tab-123",
-			"replies": []any{
-				map[string]any{
-					"addSheet": map[string]any{
-						"properties": map[string]any{
-							"sheetId": 333,
-							"title":   "NewTab",
-							"index":   1,
-							"gridProperties": map[string]any{
-								"rowCount":    500,
-								"columnCount": 20,
+		var req map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		requests, _ := req["requests"].([]any)
+		if len(requests) != 1 {
+			http.Error(w, "expected 1 request", http.StatusBadRequest)
+			return
+		}
+		first := requests[0].(map[string]any)
+		if _, ok := first["addSheet"]; ok {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"spreadsheetId": "tab-123",
+				"replies": []any{
+					map[string]any{
+						"addSheet": map[string]any{
+							"properties": map[string]any{
+								"sheetId": 333,
+								"title":   "NewTab",
+								"index":   1,
+								"gridProperties": map[string]any{
+									"rowCount":    500,
+									"columnCount": 20,
+								},
 							},
 						},
 					},
 				},
-			},
-		})
+			})
+			return
+		}
+		if del, ok := first["deleteSheet"].(map[string]any); ok {
+			if del["sheetId"].(float64) != 333 {
+				http.Error(w, "unexpected sheetId", http.StatusBadRequest)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"spreadsheetId": "tab-123",
+				"replies":       []any{map[string]any{}},
+			})
+			return
+		}
+		http.Error(w, "unknown batchUpdate request", http.StatusBadRequest)
 	}))
 	defer srv.Close()
 
@@ -280,9 +306,18 @@ func TestExportCommand(t *testing.T) {
 	defer func() { testClientOpts = nil }()
 
 	cmd := New().Command(deps)
+	var stdoutBuf, stderrBuf bytes.Buffer
+	cmd.SetOut(&stdoutBuf)
+	cmd.SetErr(&stderrBuf)
 	cmd.SetArgs([]string{"export", "exp-123", "--out", outFile})
 	if err := cmd.ExecuteContext(context.Background()); err != nil {
 		t.Fatal(err)
+	}
+	if stdoutBuf.Len() != 0 {
+		t.Fatalf("expected empty stdout when --out is used, got %q", stdoutBuf.String())
+	}
+	if !strings.Contains(stderrBuf.String(), "Exported to ") {
+		t.Fatalf("expected stderr notice, got %q", stderrBuf.String())
 	}
 
 	data, err := os.ReadFile(outFile)
@@ -295,14 +330,14 @@ func TestExportCommand(t *testing.T) {
 
 	// Test export to stdout
 	cmd2 := New().Command(deps)
-	var stdoutBuf bytes.Buffer
-	cmd2.SetOut(&stdoutBuf)
+	var outBuf2 bytes.Buffer
+	cmd2.SetOut(&outBuf2)
 	cmd2.SetArgs([]string{"export", "exp-123"})
 	if err := cmd2.ExecuteContext(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if strings.TrimSpace(stdoutBuf.String()) != "H1,H2" {
-		t.Fatalf("export stdout = %q, want %q", stdoutBuf.String(), "H1,H2")
+	if strings.TrimSpace(outBuf2.String()) != "H1,H2" {
+		t.Fatalf("export stdout = %q, want %q", outBuf2.String(), "H1,H2")
 	}
 }
 
@@ -432,6 +467,16 @@ func TestFriendlyErrors(t *testing.T) {
 			w.Write([]byte(`{"error":{"code":404,"message":"Requested entity was not found."}}`))
 			return
 		}
+		if strings.Contains(path, "403-scope") {
+			w.WriteHeader(http.StatusForbidden)
+			w.Write([]byte(`{"error":{"code":403,"message":"Request had insufficient authentication scopes."}}`))
+			return
+		}
+		if strings.Contains(path, "403-disabled") {
+			w.WriteHeader(http.StatusForbidden)
+			w.Write([]byte(`{"error":{"code":403,"message":"Google Sheets API has not been used in project 123 before or it is disabled."}}`))
+			return
+		}
 		if strings.Contains(path, "403") {
 			w.WriteHeader(http.StatusForbidden)
 			w.Write([]byte(`{"error":{"code":403,"message":"The caller does not have permission"}}`))
@@ -466,6 +511,22 @@ func TestFriendlyErrors(t *testing.T) {
 		t.Fatalf("expected 403 friendly error, got: %v", err)
 	}
 
+	// Test 403 insufficient scope
+	cmd = New().Command(deps)
+	cmd.SetArgs([]string{"info", "403-scope-id"})
+	err = cmd.ExecuteContext(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "missing OAuth scopes: run 'gsvc auth login' again") {
+		t.Fatalf("expected 403 scope error, got: %v", err)
+	}
+
+	// Test 403 API disabled
+	cmd = New().Command(deps)
+	cmd.SetArgs([]string{"info", "403-disabled-id"})
+	err = cmd.ExecuteContext(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "Google Sheets API is not enabled") {
+		t.Fatalf("expected 403 API disabled error, got: %v", err)
+	}
+
 	// Test 400
 	cmd = New().Command(deps)
 	cmd.SetArgs([]string{"get", "400-id", "InvalidRange"})
@@ -475,3 +536,99 @@ func TestFriendlyErrors(t *testing.T) {
 	}
 }
 
+func TestInvalidOptionFlags(t *testing.T) {
+	authErrDeps := &service.Deps{
+		Out: output.NewWriter("json", &bytes.Buffer{}),
+		NewClient: func(ctx context.Context, scopes ...string) (*http.Client, error) {
+			t.Fatal("NewClient should not be called when option flags are invalid")
+			return nil, nil
+		},
+	}
+
+	cmd := New().Command(authErrDeps)
+	cmd.SetArgs([]string{"get", "id", "Sheet1!A1", "--render", "bogus"})
+	if err := cmd.ExecuteContext(context.Background()); err == nil {
+		t.Fatal("expected error for invalid --render")
+	}
+
+	cmd = New().Command(authErrDeps)
+	cmd.SetArgs([]string{"append", "id", "Sheet1!A1", "--input-type", "bogus", "val"})
+	if err := cmd.ExecuteContext(context.Background()); err == nil {
+		t.Fatal("expected error for invalid --input-type")
+	}
+
+	// Missing values should fail before calling NewClient
+	cmd = New().Command(authErrDeps)
+	cmd.SetArgs([]string{"update", "id", "Sheet1!A1"})
+	if err := cmd.ExecuteContext(context.Background()); err == nil {
+		t.Fatal("expected error when no values provided")
+	}
+}
+
+func TestTextOutputCommands(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v4/spreadsheets":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"spreadsheetId":  "id-1",
+				"spreadsheetUrl": "https://example.com/1",
+				"properties":     map[string]any{"title": "My Sheet"},
+			})
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/values/"):
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"range":  "Sheet1!A1:B1",
+				"values": []any{[]any{"A", "B"}},
+			})
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, ":append"):
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"spreadsheetId": "id-1",
+				"updates": map[string]any{
+					"updatedRange": "Sheet1!A2:B2",
+					"updatedRows":  1,
+				},
+			})
+		case r.Method == http.MethodPut:
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"spreadsheetId": "id-1",
+				"updatedRange":  "Sheet1!A1:B1",
+				"updatedRows":   1,
+			})
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, ":batchUpdate"):
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"spreadsheetId": "id-1",
+				"replies": []any{
+					map[string]any{
+						"addSheet": map[string]any{
+							"properties": map[string]any{"sheetId": 5, "title": "Tab5"},
+						},
+					},
+				},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	cases := [][]string{
+		{"create", "My Sheet"},
+		{"get", "id-1", "Sheet1!A1:B1"},
+		{"append", "id-1", "Sheet1!A1", "x", "y"},
+		{"update", "id-1", "Sheet1!A1:B1", "x", "y"},
+		{"add-tab", "id-1", "Tab5"},
+	}
+	for _, args := range cases {
+		var buf bytes.Buffer
+		deps := setupTestDeps(srv, "text", &buf)
+		cmd := New().Command(deps)
+		cmd.SetArgs(args)
+		err := cmd.ExecuteContext(context.Background())
+		testClientOpts = nil
+		if err != nil {
+			t.Fatalf("command %v failed with -o text: %v", args, err)
+		}
+		if buf.Len() == 0 {
+			t.Fatalf("command %v produced empty text output", args)
+		}
+	}
+}

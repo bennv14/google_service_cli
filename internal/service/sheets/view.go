@@ -4,17 +4,22 @@ import (
 	"fmt"
 	"io"
 	"strconv"
+	"strings"
 
 	"github.com/bennv14/google_service_cli/internal/output"
 )
 
 var (
 	_ output.TableView = SpreadsheetMeta{}
+	_ output.TextView  = SpreadsheetMeta{}
 	_ output.TableView = SpreadsheetInfo{}
 	_ output.TextView  = SpreadsheetInfo{}
 	_ output.TableView = ValueRange{}
+	_ output.TextView  = ValueRange{}
 	_ output.TableView = UpdateResult{}
+	_ output.TextView  = UpdateResult{}
 	_ output.TableView = TabResult{}
+	_ output.TextView  = TabResult{}
 	_ output.TableView = SimpleMessage{}
 	_ output.TextView  = SimpleMessage{}
 )
@@ -32,6 +37,11 @@ func (m SpreadsheetMeta) Headers() []string {
 
 func (m SpreadsheetMeta) Rows() [][]string {
 	return [][]string{{m.ID, m.Title, m.URL}}
+}
+
+func (m SpreadsheetMeta) Text(w io.Writer) error {
+	_, err := fmt.Fprintf(w, "Title: %s (%s)\nURL: %s\n", m.Title, m.ID, m.URL)
+	return err
 }
 
 // SheetTab represents a worksheet within a spreadsheet.
@@ -121,7 +131,7 @@ func (v ValueRange) Rows() [][]string {
 		r := make([]string, maxCols)
 		for c := 0; c < maxCols; c++ {
 			if c < len(row) && row[c] != nil {
-				r[c] = fmt.Sprintf("%v", row[c])
+				r[c] = sanitizeTableCell(fmt.Sprintf("%v", row[c]))
 			} else {
 				r[c] = ""
 			}
@@ -129,6 +139,27 @@ func (v ValueRange) Rows() [][]string {
 		rows = append(rows, r)
 	}
 	return rows
+}
+
+func (v ValueRange) Text(w io.Writer) error {
+	for _, row := range v.Values {
+		cells := make([]string, len(row))
+		for i, cell := range row {
+			if cell != nil {
+				cells[i] = fmt.Sprintf("%v", cell)
+			}
+		}
+		if _, err := fmt.Fprintln(w, strings.Join(cells, "\t")); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+var tableCellReplacer = strings.NewReplacer("\t", " ", "\r\n", " ", "\n", " ", "\r", " ")
+
+func sanitizeTableCell(s string) string {
+	return tableCellReplacer.Replace(s)
 }
 
 // columnIndexToA1 converts zero-based column index (0 -> "A", 25 -> "Z", 26 -> "AA").
@@ -165,6 +196,12 @@ func (u UpdateResult) Rows() [][]string {
 	}}
 }
 
+func (u UpdateResult) Text(w io.Writer) error {
+	_, err := fmt.Fprintf(w, "Updated %s (%d rows, %d columns, %d cells)\n",
+		u.UpdatedRange, u.UpdatedRows, u.UpdatedColumns, u.UpdatedCells)
+	return err
+}
+
 // TabResult captures the result of adding a tab.
 type TabResult struct {
 	SheetID     int64  `json:"sheetId"`
@@ -185,6 +222,12 @@ func (t TabResult) Rows() [][]string {
 		strconv.FormatInt(t.Index, 10),
 		fmt.Sprintf("%dx%d", t.RowCount, t.ColumnCount),
 	}}
+}
+
+func (t TabResult) Text(w io.Writer) error {
+	_, err := fmt.Fprintf(w, "Tab %s (ID: %d, Index: %d, Grid: %dx%d)\n",
+		t.Title, t.SheetID, t.Index, t.RowCount, t.ColumnCount)
+	return err
 }
 
 // SimpleMessage renders a simple string result in text or table form.

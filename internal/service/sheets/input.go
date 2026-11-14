@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 )
 
-// CleanPath standardizes and cleans a filesystem path to prevent traversal vulnerabilities.
+// CleanPath normalizes a local filesystem path using filepath.Clean.
 func CleanPath(path string) string {
 	if path == "" {
 		return ""
@@ -33,16 +33,18 @@ func ParseValues(filePath string, args []string, r io.Reader) ([][]interface{}, 
 	}
 
 	if r != nil {
-		// If r is *os.File, verify it is a pipe or regular file with data
+		shouldRead := true
+		// If r is *os.File, only read when it is a pipe or regular file (not an interactive TTY).
 		if f, ok := r.(*os.File); ok {
 			stat, err := f.Stat()
-			if err == nil && (stat.Mode()&os.ModeCharDevice) == 0 {
-				return ParseCSV(f)
-			}
-		} else {
-			// For buffers and custom readers used in tests
+			shouldRead = err == nil && (stat.Mode()&os.ModeCharDevice) == 0
+		}
+		if shouldRead {
 			vals, err := ParseCSV(r)
-			if err == nil && len(vals) > 0 {
+			if err != nil {
+				return nil, err
+			}
+			if len(vals) > 0 {
 				return vals, nil
 			}
 		}

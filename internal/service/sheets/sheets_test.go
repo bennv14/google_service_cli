@@ -25,31 +25,49 @@ func TestOAuthScopes(t *testing.T) {
 
 func TestResolveOptions(t *testing.T) {
 	// Test render option resolution
-	if got := resolveRenderOption("unformatted"); got != "UNFORMATTED_VALUE" {
-		t.Errorf("expected UNFORMATTED_VALUE, got %s", got)
+	renderCases := []struct {
+		in   string
+		want string
+	}{
+		{"", "FORMATTED_VALUE"},
+		{"formatted", "FORMATTED_VALUE"},
+		{"unformatted", "UNFORMATTED_VALUE"},
+		{"FORMULA", "FORMULA"},
 	}
-	if got := resolveRenderOption("FORMULA"); got != "FORMULA" {
-		t.Errorf("expected FORMULA, got %s", got)
+	for _, tc := range renderCases {
+		got, err := resolveRenderOption(tc.in)
+		if err != nil {
+			t.Fatalf("resolveRenderOption(%q) unexpected err: %v", tc.in, err)
+		}
+		if got != tc.want {
+			t.Errorf("resolveRenderOption(%q) = %s, want %s", tc.in, got, tc.want)
+		}
 	}
-	if got := resolveRenderOption("formatted"); got != "FORMATTED_VALUE" {
-		t.Errorf("expected FORMATTED_VALUE, got %s", got)
-	}
-	if got := resolveRenderOption("other"); got != "FORMATTED_VALUE" {
-		t.Errorf("expected default FORMATTED_VALUE, got %s", got)
+	if _, err := resolveRenderOption("other"); err == nil {
+		t.Errorf("expected error for invalid render option")
 	}
 
 	// Test input option resolution
-	if got := resolveInputOption("raw"); got != "RAW" {
-		t.Errorf("expected RAW, got %s", got)
+	inputCases := []struct {
+		in   string
+		want string
+	}{
+		{"", "USER_ENTERED"},
+		{"user_entered", "USER_ENTERED"},
+		{"raw", "RAW"},
+		{"RAW", "RAW"},
 	}
-	if got := resolveInputOption("RAW"); got != "RAW" {
-		t.Errorf("expected RAW, got %s", got)
+	for _, tc := range inputCases {
+		got, err := resolveInputOption(tc.in)
+		if err != nil {
+			t.Fatalf("resolveInputOption(%q) unexpected err: %v", tc.in, err)
+		}
+		if got != tc.want {
+			t.Errorf("resolveInputOption(%q) = %s, want %s", tc.in, got, tc.want)
+		}
 	}
-	if got := resolveInputOption("user_entered"); got != "USER_ENTERED" {
-		t.Errorf("expected USER_ENTERED, got %s", got)
-	}
-	if got := resolveInputOption("anything_else"); got != "USER_ENTERED" {
-		t.Errorf("expected default USER_ENTERED, got %s", got)
+	if _, err := resolveInputOption("anything_else"); err == nil {
+		t.Errorf("expected error for invalid input option")
 	}
 }
 
@@ -568,7 +586,8 @@ func TestClientAddTab_ZeroIndex(t *testing.T) {
 
 func TestClientExportCSV_SpecialTabName(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/v4/spreadsheets/sheet-special/values/'John''s Data'" {
+		switch r.URL.Path {
+		case "/v4/spreadsheets/sheet-special/values/'John''s Data'":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"range": "'John''s Data'!A1:A2",
 				"values": []any{
@@ -576,9 +595,16 @@ func TestClientExportCSV_SpecialTabName(t *testing.T) {
 					[]any{"99"},
 				},
 			})
-			return
+		case "/v4/spreadsheets/sheet-special/values/'Sales!'":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"range": "'Sales!'!A1:A1",
+				"values": []any{
+					[]any{"OK"},
+				},
+			})
+		default:
+			http.NotFound(w, r)
 		}
-		http.NotFound(w, r)
 	}))
 	defer srv.Close()
 
@@ -594,6 +620,14 @@ func TestClientExportCSV_SpecialTabName(t *testing.T) {
 	}
 	if buf.String() != "Score\n99\n" {
 		t.Fatalf("got %q, want %q", buf.String(), "Score\n99\n")
+	}
+
+	buf.Reset()
+	if err := cl.ExportCSV(ctx, "sheet-special", "Sales!", "", &buf); err != nil {
+		t.Fatalf("ExportCSV() with exclamation mark failed: %v", err)
+	}
+	if buf.String() != "OK\n" {
+		t.Fatalf("got %q, want %q", buf.String(), "OK\n")
 	}
 }
 
@@ -632,5 +666,3 @@ func TestClientExportCSV_NoDestination(t *testing.T) {
 		t.Fatalf("expected 'outPath or outWriter must be provided' error, got %v", err)
 	}
 }
-
-
