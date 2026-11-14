@@ -178,11 +178,16 @@ func TestNewDirectorySkipsTheCacheWithNowhereToWrite(t *testing.T) {
 }
 
 // --refresh-names is useless on a command that cannot show a name, so every
-// chat subcommand carries it — including spaces, which does not use
-// addQueryFlags.
+// chat reading subcommand carries it — including spaces, which does not use
+// addQueryFlags. Write commands (send, edit, delete, react) do not query
+// directories.
 func TestRefreshNamesFlagIsOnEverySubcommand(t *testing.T) {
 	cmd := New().Command(&service.Deps{})
+	writeCmds := map[string]bool{"send": true, "edit": true, "delete": true, "react": true}
 	for _, c := range cmd.Commands() {
+		if writeCmds[c.Name()] {
+			continue
+		}
 		if c.Flags().Lookup("refresh-names") == nil {
 			t.Errorf("chat %s is missing --refresh-names", c.Name())
 		}
