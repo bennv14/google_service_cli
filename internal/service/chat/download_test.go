@@ -15,15 +15,8 @@ func TestDownloader_DownloadAttachment(t *testing.T) {
 			return os.WriteFile(targetPath, []byte("chat file"), 0644)
 		},
 	}
-	driveMock := &mockDriveClient{
-		downloadFunc: func(ctx context.Context, id, outPath string) (string, error) {
-			return outPath, os.WriteFile(outPath, []byte("drive file"), 0644)
-		},
-	}
 
-	chatStrat := NewChatMediaStrategy(chatMock)
-	driveStrat := NewDriveFileStrategy(driveMock)
-	dl := NewDownloader(chatStrat, driveStrat)
+	dl := NewDownloader(NewChatMediaStrategy(chatMock))
 
 	tmpDir := t.TempDir()
 
@@ -45,15 +38,25 @@ func TestDownloader_DownloadAttachment(t *testing.T) {
 	t.Run("DriveAttachment", func(t *testing.T) {
 		p := filepath.Join(tmpDir, "drive.pdf")
 		err := dl.DownloadAttachment(context.Background(), AttachmentInfo{
+			ContentName: "drive.pdf",
 			Source:      "DRIVE_FILE",
 			DriveFileID: "drv1",
 		}, p)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
+		if err == nil || !strings.Contains(err.Error(), "gsvc drive download drv1") {
+			t.Fatalf("expected gsvc drive download hint error, got: %v", err)
 		}
-		data, _ := os.ReadFile(p)
-		if string(data) != "drive file" {
-			t.Errorf("content = %q, want drive file", string(data))
+		if _, statErr := os.Stat(p); !os.IsNotExist(statErr) {
+			t.Fatalf("expected no file to be written for DRIVE_FILE attachment")
+		}
+	})
+
+	t.Run("DriveAttachmentWithoutID", func(t *testing.T) {
+		err := dl.DownloadAttachment(context.Background(), AttachmentInfo{
+			ContentName: "drive.pdf",
+			Source:      "DRIVE_FILE",
+		}, filepath.Join(tmpDir, "unused.pdf"))
+		if err == nil || !strings.Contains(err.Error(), "Google Drive file and cannot be downloaded via Chat Media API") {
+			t.Fatalf("expected generic Drive unsupported error, got: %v", err)
 		}
 	})
 
@@ -72,16 +75,11 @@ func TestDownloader_DownloadAll_Success(t *testing.T) {
 
 	chatMock := &mockChatMediaClient{
 		downloadFunc: func(ctx context.Context, resourceName, targetPath string) error {
-			return os.WriteFile(targetPath, []byte("chat file content"), 0644)
-		},
-	}
-	driveMock := &mockDriveClient{
-		downloadFunc: func(ctx context.Context, id, outPath string) (string, error) {
-			return outPath, os.WriteFile(outPath, []byte("drive file content"), 0644)
+			return os.WriteFile(targetPath, []byte("content:"+resourceName), 0644)
 		},
 	}
 
-	downloader := NewDownloader(NewChatMediaStrategy(chatMock), NewDriveFileStrategy(driveMock))
+	downloader := NewDownloader(NewChatMediaStrategy(chatMock))
 	atts := []AttachmentInfo{
 		{
 			Name:         "spaces/s/messages/m/attachments/a1",
@@ -90,10 +88,10 @@ func TestDownloader_DownloadAll_Success(t *testing.T) {
 			ResourceName: "spaces/s/messages/m/attachments/a1",
 		},
 		{
-			Name:        "spaces/s/messages/m/attachments/a2",
-			ContentName: "report.pdf",
-			Source:      "DRIVE_FILE",
-			DriveFileID: "drive-id-456",
+			Name:         "spaces/s/messages/m/attachments/a2",
+			ContentName:  "notes.txt",
+			Source:       "UPLOADED_CONTENT",
+			ResourceName: "spaces/s/messages/m/attachments/a2",
 		},
 	}
 
@@ -115,17 +113,17 @@ func TestDownloader_DownloadAll_Success(t *testing.T) {
 	if results[0].LocalPath != filepath.Join(tmpDir, "image.png") {
 		t.Errorf("result[0].LocalPath = %q, want %q", results[0].LocalPath, filepath.Join(tmpDir, "image.png"))
 	}
-	if results[1].LocalPath != filepath.Join(tmpDir, "report.pdf") {
-		t.Errorf("result[1].LocalPath = %q, want %q", results[1].LocalPath, filepath.Join(tmpDir, "report.pdf"))
+	if results[1].LocalPath != filepath.Join(tmpDir, "notes.txt") {
+		t.Errorf("result[1].LocalPath = %q, want %q", results[1].LocalPath, filepath.Join(tmpDir, "notes.txt"))
 	}
 
 	gotBytes1, _ := os.ReadFile(results[0].LocalPath)
-	if string(gotBytes1) != "chat file content" {
-		t.Errorf("result[0] content = %q, want %q", string(gotBytes1), "chat file content")
+	if string(gotBytes1) != "content:spaces/s/messages/m/attachments/a1" {
+		t.Errorf("result[0] content = %q, want %q", string(gotBytes1), "content:spaces/s/messages/m/attachments/a1")
 	}
 	gotBytes2, _ := os.ReadFile(results[1].LocalPath)
-	if string(gotBytes2) != "drive file content" {
-		t.Errorf("result[1] content = %q, want %q", string(gotBytes2), "drive file content")
+	if string(gotBytes2) != "content:spaces/s/messages/m/attachments/a2" {
+		t.Errorf("result[1] content = %q, want %q", string(gotBytes2), "content:spaces/s/messages/m/attachments/a2")
 	}
 }
 
@@ -290,6 +288,12 @@ func TestDownloader_DownloadAll_PartialFailure(t *testing.T) {
 			Source:       "UPLOADED_CONTENT",
 			ResourceName: "res-fail",
 		},
+		{
+			Name:        "a3",
+			ContentName: "report.pdf",
+			Source:      "DRIVE_FILE",
+			DriveFileID: "drive-id-456",
+		},
 	}
 
 	results, err := downloader.DownloadAll(context.Background(), atts, tmpDir, "")
@@ -297,13 +301,16 @@ func TestDownloader_DownloadAll_PartialFailure(t *testing.T) {
 		t.Fatalf("DownloadAll should return results list even if individual downloads fail, got err: %v", err)
 	}
 
-	if len(results) != 2 {
-		t.Fatalf("expected 2 results, got %d", len(results))
+	if len(results) != 3 {
+		t.Fatalf("expected 3 results, got %d", len(results))
 	}
 	if results[0].Err != nil {
 		t.Errorf("expected result[0] to succeed, got error: %v", results[0].Err)
 	}
 	if results[1].Err == nil {
 		t.Errorf("expected result[1] to fail, got nil error")
+	}
+	if results[2].Err == nil || !strings.Contains(results[2].Err.Error(), "gsvc drive download drive-id-456") {
+		t.Errorf("expected result[2] to fail with gsvc drive download hint, got: %v", results[2].Err)
 	}
 }
