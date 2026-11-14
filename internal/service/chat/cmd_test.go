@@ -691,7 +691,7 @@ func TestChatMessageShortIDWithSpaceFlag(t *testing.T) {
 	}
 }
 
-func TestChatMessageDriveAttachmentDownload(t *testing.T) {
+func TestChatMessageDriveAttachmentDownloadSuggestsDriveCommand(t *testing.T) {
 	tmp := t.TempDir()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -713,42 +713,49 @@ func TestChatMessageDriveAttachmentDownload(t *testing.T) {
 					},
 				},
 			})
-		case "/drive/v3/files/drive-file-999", "/files/drive-file-999":
-			if r.URL.Query().Get("alt") == "media" {
-				_, _ = w.Write([]byte("%PDF-1.4 mock content"))
-				return
-			}
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"id":   "drive-file-999",
-				"name": "report.pdf",
-			})
 		case "/v1/people:batchGet":
 			_ = json.NewEncoder(w).Encode(map[string]any{"responses": []any{}})
+		case "/v1/users/me/spaces/A/messages/t1.m1/spaceReadState":
+			http.NotFound(w, r)
 		default:
+			t.Errorf("unexpected HTTP request to %s", r.URL.Path)
 			http.NotFound(w, r)
 		}
 	}))
 	t.Cleanup(srv.Close)
 
-	var out bytes.Buffer
-	cmd := New().Command(testDeps(t, srv, "text", false, &out))
+	var out, errBuf bytes.Buffer
+	deps := testDeps(t, srv, "text", false, &out)
+	origNewClient := deps.NewClient
+	deps.NewClient = func(ctx context.Context, scopes ...string) (*http.Client, error) {
+		for _, sc := range scopes {
+			if strings.Contains(sc, "drive") {
+				t.Errorf("unexpected drive OAuth scope requested: %q", sc)
+			}
+		}
+		return origNewClient(ctx, scopes...)
+	}
+
+	cmd := New().Command(deps)
 	cmd.SetOut(&out)
+	cmd.SetErr(&errBuf)
 	cmd.SetArgs([]string{"message", "A/t1/m1", "--download", "--output-dir", tmp})
-	cmd.SetErr(new(bytes.Buffer))
 	if err := cmd.ExecuteContext(context.Background()); err != nil {
 		t.Fatalf("cmd.ExecuteContext error: %v", err)
 	}
 
-	downloadedFile := filepath.Join(tmp, "report.pdf")
-	content, err := os.ReadFile(downloadedFile)
+	entries, err := os.ReadDir(tmp)
 	if err != nil {
-		t.Fatalf("ReadFile error: %v", err)
+		t.Fatalf("ReadDir error: %v", err)
 	}
-	if string(content) != "%PDF-1.4 mock content" {
-		t.Errorf("content = %q, want mock pdf", string(content))
+	if len(entries) != 0 {
+		t.Fatalf("expected %s to remain empty, found %d entries", tmp, len(entries))
 	}
-	if !strings.Contains(out.String(), "Downloaded report.pdf") {
-		t.Errorf("stdout missing download confirmation:\n%s", out.String())
+	if strings.Contains(out.String(), "Downloaded report.pdf") {
+		t.Errorf("stdout unexpectedly reported download:\n%s", out.String())
+	}
+	if !strings.Contains(errBuf.String(), "gsvc drive download drive-file-999") {
+		t.Errorf("stderr missing gsvc drive download suggestion:\n%s", errBuf.String())
 	}
 }
 

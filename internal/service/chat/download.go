@@ -46,6 +46,12 @@ func (d *Downloader) DownloadAttachment(ctx context.Context, att AttachmentInfo,
 			return s.Download(ctx, att, targetPath)
 		}
 	}
+	if att.Source == "DRIVE_FILE" || att.DriveFileID != "" {
+		if att.DriveFileID != "" {
+			return fmt.Errorf("attachment %q is a Google Drive file (%s); download it with: gsvc drive download %s", att.ContentName, att.DriveFileID, att.DriveFileID)
+		}
+		return fmt.Errorf("attachment %q is a Google Drive file and cannot be downloaded via Chat Media API", att.ContentName)
+	}
 	return fmt.Errorf("no download strategy available for attachment %q (source: %q)", att.ContentName, att.Source)
 }
 

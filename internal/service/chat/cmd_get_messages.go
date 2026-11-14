@@ -9,7 +9,6 @@ import (
 
 	"github.com/bennv14/google_service_cli/internal/gerr"
 	"github.com/bennv14/google_service_cli/internal/service"
-	"github.com/bennv14/google_service_cli/internal/service/drive"
 )
 
 // runQuery is the shared body of every message-reading command; adjust applies
@@ -244,33 +243,7 @@ Supported ID formats:
 					return err
 				}
 
-				var driveCl *drive.Client
-				hasDriveFile := false
-				for _, att := range sm.Message.Attachments {
-					if att.Source == "DRIVE_FILE" || att.DriveFileID != "" {
-						hasDriveFile = true
-						break
-					}
-				}
-				if hasDriveFile {
-					hcDrive, err := d.NewClient(ctx, drive.OAuthScopes...)
-					if err != nil {
-						return err
-					}
-					driveCl, err = drive.NewClient(ctx, hcDrive, testClientOpts...)
-					if err != nil {
-						return err
-					}
-				}
-
-				strategies := []DownloadStrategy{
-					NewChatMediaStrategy(chatCl),
-				}
-				if driveCl != nil {
-					strategies = append(strategies, NewDriveFileStrategy(driveCl))
-				}
-
-				dl := NewDownloader(strategies...)
+				dl := NewDownloader(NewChatMediaStrategy(chatCl))
 				results, err := dl.DownloadAll(ctx, sm.Message.Attachments, outputDir, outFile)
 				if err != nil {
 					return err
