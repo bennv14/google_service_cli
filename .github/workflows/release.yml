@@ -1,0 +1,102 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  pull_request:
+    branches:
+      - main
+    types:
+      - closed
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    if: >
+      github.event_name == 'push' ||
+      (
+        github.event_name == 'pull_request' &&
+        github.event.pull_request.merged == true &&
+        github.event.pull_request.base.ref == 'main' &&
+        github.event.pull_request.head.repo.full_name == github.repository &&
+        (
+          startsWith(github.event.pull_request.head.ref, 'chore/release-v') ||
+          startsWith(github.event.pull_request.head.ref, 'release/v')
+        )
+      )
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.merge_commit_sha || github.ref }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Run vet and tests
+        run: |
+          go vet ./...
+          go test -count=1 -race ./...
+
+      - name: Tag release from merged release PR
+        if: github.event_name == 'pull_request'
+        env:
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: |
+          set -euo pipefail
+
+          case "$HEAD_REF" in
+            chore/release-v*) TAG="v${HEAD_REF#chore/release-v}" ;;
+            release/v*) TAG="v${HEAD_REF#release/v}" ;;
+            *)
+              echo "::error::Unsupported release branch name: $HEAD_REF"
+              exit 1
+              ;;
+          esac
+
+          if ! echo "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+            echo "::error::Invalid semver tag derived from branch '$HEAD_REF': '$TAG'"
+            exit 1
+          fi
+
+          if ! grep -Fq "## [$TAG]" CHANGELOG.md; then
+            echo "::error::CHANGELOG.md is missing section '## [$TAG]'"
+            exit 1
+          fi
+
+          HEAD_SHA="$(git rev-parse HEAD)"
+          REMOTE_TAG_SHA="$(git ls-remote --tags origin "refs/tags/${TAG}^{}" | awk '{print $1}')"
+          if [ -z "$REMOTE_TAG_SHA" ]; then
+            REMOTE_TAG_SHA="$(git ls-remote --tags origin "refs/tags/${TAG}" | awk '{print $1}')"
+          fi
+
+          if [ -n "$REMOTE_TAG_SHA" ]; then
+            if [ "$REMOTE_TAG_SHA" != "$HEAD_SHA" ]; then
+              echo "::error::Tag $TAG already exists on $REMOTE_TAG_SHA (expected $HEAD_SHA)"
+              exit 1
+            fi
+            echo "Tag $TAG already points to $HEAD_SHA; continuing release."
+            git fetch origin "refs/tags/${TAG}:refs/tags/${TAG}" --force
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git tag -a "$TAG" -m "$TAG"
+            git push origin "refs/tags/${TAG}"
+          fi
+
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
