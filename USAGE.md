@@ -1,8 +1,8 @@
 # gsvc — Usage Guide
 
 `gsvc` is a command line tool for reading and writing data in Google services.
-It currently supports **Google Drive** (read and write) and **Google Chat**
-(read-only).
+It currently supports **Google Drive** (read and write), **Google Chat**
+(read and write), and **Google Sheets** (read and write).
 
 - [Install](#install)
 - [Quick start](#quick-start)
@@ -12,6 +12,7 @@ It currently supports **Google Drive** (read and write) and **Google Chat**
 - [Global flags and output formats](#global-flags-and-output-formats)
 - [Drive commands](#drive-commands)
 - [Chat commands](#chat-commands)
+- [Sheets commands](#sheets-commands)
 - [Shell completion](#shell-completion)
 - [Files on disk](#files-on-disk)
 - [Troubleshooting](#troubleshooting)
@@ -79,6 +80,7 @@ project, the consent screen, and the quota.
    - *People API* — for `gsvc chat` to show senders' names instead of raw
      `users/1234…` IDs. Without it, chat commands still work and print a
      one-line warning.
+   - *Google Sheets API* — for `gsvc sheets`
 3. Configure the **OAuth consent screen**. While it is in *Testing* mode, add
    your own Google account under *Test users* — the Chat scopes are restricted
    scopes and will be refused otherwise.
@@ -92,15 +94,16 @@ screen:
 | Service | Scopes |
 | --- | --- |
 | Drive | `drive.readonly`, `drive.file` |
-| Chat | `chat.spaces.readonly`, `chat.messages.readonly`, `chat.users.readstate.readonly`, `directory.readonly` |
+| Chat | `chat.spaces.readonly`, `chat.messages.readonly`, `chat.messages`, `chat.users.readstate.readonly`, `directory.readonly` |
+| Sheets | `spreadsheets`, `spreadsheets.readonly` |
 
-All Chat scopes are read-only; `gsvc` never calls a mutating Chat endpoint.
-`directory.readonly` is what turns a sender's `users/1234…` ID into their name:
-the Chat API leaves `displayName` empty for every user when the caller
-authenticates as a person rather than as a Chat app.
+`chat.messages` enables sending, editing, deleting, uploading attachments, and
+reacting to Chat messages. `directory.readonly` is what turns a sender's
+`users/1234…` ID into their name: the Chat API leaves `displayName` empty for
+every user when the caller authenticates as a person rather than as a Chat app.
 
 > **Google Chat requires a Google Workspace account.** The Chat API does not
-> serve consumer (`@gmail.com`) accounts. Drive works with both.
+> serve consumer (`@gmail.com`) accounts. Drive and Sheets work with both.
 
 ## Profiles
 
@@ -241,8 +244,8 @@ gsvc drive upload ./notes.md --to 1FolderId --name "Meeting notes.md"
 
 ## Chat commands
 
-Read-only. Requires a Google Workspace account and the Chat API enabled in your
-OAuth client's project.
+Requires a Google Workspace account and the Chat API enabled in your OAuth
+client's project.
 
 **Thread titles.** Chat has no thread-title field — a thread's subject is
 whatever its first message says. Every command that shows threads labels each
@@ -407,9 +410,10 @@ they can be copied directly into `chat message`.
 
 Attachments (both Chat uploaded files and Google Drive attachments) are listed in
 the message output with their name and MIME type (`📎 filename (type)`).
-With `--download`, attachments are fetched via the Chat Media API or Google Drive
-API and saved locally. Untrusted remote filenames are automatically sanitized to
-prevent path traversal.
+With `--download`, Chat-hosted attachments are downloaded via the Chat Media API
+and saved locally (untrusted remote filenames are sanitized to prevent path
+traversal). For Google Drive attachments, `gsvc` prints the corresponding
+`gsvc drive download <driveFileId>` command to run.
 
 ```bash
 # Read a single message
@@ -426,6 +430,168 @@ gsvc chat message AAAA9GOspFY/t-uT1uhCWAg/emH4eHFJkeY --download --out ./invoice
 
 # Read message metadata and attachments as JSON
 gsvc chat message AAAA9GOspFY/t-uT1uhCWAg/emH4eHFJkeY -o json
+```
+
+### `chat send`
+
+Send a message to a space, DM (by partner email), thread, or in reply to an
+existing message. Text can come from a positional argument, `--text`/`-m`, or
+piped stdin, and is sent verbatim so native Google Chat formatting works without
+mangling.
+
+| Flag | Description |
+| --- | --- |
+| `--space <s>` | Space resource name (`spaces/...`), display name, or DM partner's email |
+| `--thread <t>` | Thread resource name (`spaces/X/threads/Y`), short ID, or Chat URL |
+| `--reply-to <msg>` | Message ID, resource name, or Chat URL to reply to |
+| `-m, --text <body>` | Message text body |
+| `-a, --attach <path>` | Local file path to upload and attach (repeatable) |
+| `--links` | Print URLs on their own lines instead of embedding them |
+| `--refresh-names` | Ignore cached display names and look them up again |
+
+```bash
+gsvc chat send --space engineering "Build is green"
+gsvc chat send --space colleague@company.com --attach ./report.pdf "Here is the report"
+gsvc chat send --reply-to AAAA9GOspFY/t-uT1uhCWAg/emH4eHFJkeY "Thanks!"
+echo "Multi-line message" | gsvc chat send --space engineering
+```
+
+### `chat edit`
+
+Update the text body of an existing Google Chat message while preserving its
+attachments. New text can come from a second positional argument, `--text`/`-m`,
+or piped stdin.
+
+| Flag | Description |
+| --- | --- |
+| `--space <s>` | Space ID, display name, or DM email if passing a shortened message ID |
+| `-m, --text <body>` | New message text |
+| `--links` | Print URLs on their own lines instead of embedding them |
+| `--refresh-names` | Ignore cached display names and look them up again |
+
+```bash
+gsvc chat edit AAAA9GOspFY/t-uT1uhCWAg/emH4eHFJkeY "Updated text"
+```
+
+### `chat delete`
+
+Delete a Google Chat message by ID, URL, or resource name. Requires interactive
+confirmation unless `--yes`/`-y` is passed.
+
+| Flag | Description |
+| --- | --- |
+| `--space <s>` | Space ID, display name, or DM email if passing a shortened message ID |
+| `-y, --yes` | Skip confirmation prompt |
+
+```bash
+gsvc chat delete AAAA9GOspFY/t-uT1uhCWAg/emH4eHFJkeY --yes
+```
+
+### `chat react`
+
+Add or remove a Unicode emoji reaction on a Google Chat message.
+
+| Flag | Description |
+| --- | --- |
+| `--space <s>` | Space ID, display name, or DM email if passing a shortened message ID |
+| `--remove` | Remove your matching reaction instead of adding it |
+
+```bash
+gsvc chat react AAAA9GOspFY/t-uT1uhCWAg/emH4eHFJkeY "👍"
+gsvc chat react AAAA9GOspFY/t-uT1uhCWAg/emH4eHFJkeY "👍" --remove
+```
+
+## Sheets commands
+
+Alias: `sheet`. Requires the *Google Sheets API* enabled in your OAuth client's
+GCP project.
+
+### `sheets create`
+
+Create a new Google Spreadsheet.
+
+| Flag | Description |
+| --- | --- |
+| `--tab <title>` | Title for the default initial worksheet tab |
+
+```bash
+gsvc sheets create "Q4 Budget" --tab Summary
+```
+
+### `sheets info` (alias `stat`)
+
+Show spreadsheet metadata and worksheet tabs (including each tab's `sheetId`).
+
+```bash
+gsvc sheets info <spreadsheetId>
+```
+
+### `sheets get` (alias `read`)
+
+Retrieve cell values within an A1 range.
+
+| Flag | Default | Description |
+| --- | --- | --- |
+| `--render <mode>` | `formatted` | Value rendering: `formatted` \| `unformatted` \| `formula` |
+
+```bash
+gsvc sheets get <spreadsheetId> 'Sheet1!A1:C10'
+gsvc sheets get <spreadsheetId> 'Sheet1!A1:C10' --render formula -o json
+```
+
+### `sheets append` and `sheets update` (alias `write`)
+
+Append rows after existing content or overwrite cells in a range. Values can be
+passed as positional arguments, via `--file`/`-f` (CSV), or piped on stdin.
+
+| Flag | Default | Description |
+| --- | --- | --- |
+| `-f, --file <path>` | | Read rows from a local CSV file |
+| `--input-type <type>` | `user_entered` | Input interpretation: `user_entered` \| `raw` |
+
+```bash
+gsvc sheets append <spreadsheetId> 'Sheet1!A:C' Alice 100 true
+gsvc sheets update <spreadsheetId> 'Sheet1!A1:C2' --file ./data.csv
+cat rows.csv | gsvc sheets append <spreadsheetId> 'Sheet1!A:C'
+```
+
+### `sheets clear`
+
+Clear all cell values within a specified range.
+
+```bash
+gsvc sheets clear <spreadsheetId> 'Sheet1!A2:C10'
+```
+
+### `sheets add-tab` and `sheets delete-tab`
+
+Add a new worksheet tab or delete an existing tab by its integer `sheetId` (from
+`gsvc sheets info`).
+
+`sheets add-tab` flags:
+
+| Flag | Default | Description |
+| --- | --- | --- |
+| `--index <n>` | `-1` (append) | Zero-based tab index position |
+| `--rows <n>` | `1000` | Initial row count |
+| `--cols <n>` | `26` | Initial column count |
+
+```bash
+gsvc sheets add-tab <spreadsheetId> "Archive" --index 0
+gsvc sheets delete-tab <spreadsheetId> 123456789
+```
+
+### `sheets export`
+
+Export a worksheet tab as CSV to `stdout` or a file.
+
+| Flag | Default | Description |
+| --- | --- | --- |
+| `--sheet <title>` | first tab | Specific tab title to export |
+| `--out <path>` | stdout | Target output file path |
+
+```bash
+gsvc sheets export <spreadsheetId> --sheet Summary --out ./summary.csv
 ```
 
 ## Shell completion
@@ -504,11 +670,12 @@ or `gsvc config use <name>` to pick one.
 
 **`missing OAuth scopes: run 'gsvc auth login' again to grant the new permissions`**
 Your stored token predates a scope that the command needs — this is expected
-after upgrading from v1.x, which requested Drive scopes only. Run
-`gsvc auth login` again and accept the new permissions.
+after upgrading to a release that adds new service or write scopes (such as
+v2.0.0 or v3.0.1). Run `gsvc auth login` again and accept the new permissions.
 
-**`the Google Chat API is not enabled for this OAuth client's GCP project`**
-Enable the *Google Chat API* in the project that owns your OAuth client, under
+**`the Google Chat API is not enabled for this OAuth client's GCP project`** /
+**`the Google Sheets API is not enabled for this OAuth client's GCP project`**
+Enable the corresponding API in the project that owns your OAuth client, under
 *APIs & Services → Library*. Enabling can take a minute to propagate.
 
 **`warning: cannot resolve sender names`**

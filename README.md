@@ -1,7 +1,7 @@
 # google_service_cli
 
 `gsvc` is a command line tool for interacting with Google services — **Drive**
-(read and write) and **Chat** (read-only).
+(read and write), **Chat** (read and write), and **Sheets** (read and write).
 
 ## Install
 
@@ -35,6 +35,7 @@ gsvc config add personal --auth-type oauth --client-path ~/Downloads/client_secr
 gsvc auth login
 gsvc drive list --limit 10
 gsvc chat unread
+gsvc sheets info <spreadsheetId>
 ```
 
 `gsvc` uses your own Google Cloud OAuth client. See
@@ -86,5 +87,6 @@ make test     # go test ./...
     ├── output/                # table / json / text writers
     └── service/               # service registry
         ├── drive/             # Google Drive
-        └── chat/              # Google Chat (read-only)
+        ├── chat/              # Google Chat
+        └── sheets/            # Google Sheets
 ```
