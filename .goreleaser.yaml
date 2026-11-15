@@ -65,7 +65,7 @@ homebrew_casks:
     repository:
       owner: bennv14
       name: homebrew-tap
-      token: '{{ if .Env.HOMEBREW_TAP_GITHUB_TOKEN }}{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}{{ else }}{{ .Env.GITHUB_TOKEN }}{{ end }}'
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     directory: Casks
     homepage: "https://github.com/bennv14/google_service_cli"
     description: "Google Service CLI (gsvc)"
