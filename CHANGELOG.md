@@ -7,6 +7,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v3.0.1] - 2026-11-15
+
+### Breaking changes
+
+- `gsvc auth login` now requests additional OAuth scopes for Google Sheets
+  (`spreadsheets`, `spreadsheets.readonly`) and Google Chat write operations
+  (`chat.messages`). **Existing users must run `gsvc auth login` again** to
+  grant the new permissions, and enable the *Google Sheets API* in the GCP
+  project behind their OAuth client to use `gsvc sheets`.
+
+### Added
+
+- **Google Sheets (`gsvc sheets`, alias `sheet`)**:
+  - `sheets create <title>` (`--tab`) — create a new spreadsheet.
+  - `sheets info <spreadsheetId>` (alias `stat`) — show spreadsheet metadata
+    and worksheet tabs.
+  - `sheets get <spreadsheetId> <range>` (alias `read`, `--render
+    formatted|unformatted|formula`) — read cell values from a range.
+  - `sheets append` and `sheets update` (alias `write`) — append or overwrite
+    cell values from `--file`/`-f` (CSV), piped stdin, or positional arguments,
+    with `--input-type user_entered|raw`.
+  - `sheets clear <spreadsheetId> <range>` — clear cell values in a range.
+  - `sheets add-tab <spreadsheetId> <title>` (`--index`, `--rows`, `--cols`) and
+    `sheets delete-tab <spreadsheetId> <sheetId>` — create and delete worksheet
+    tabs.
+  - `sheets export <spreadsheetId>` (`--sheet`, `--out`) — export a worksheet
+    tab as CSV to `stdout` or a file.
+- **Google Chat write commands (`gsvc chat`)**:
+  - `chat send [text]` (`--space`, `--thread`, `--reply-to`, `--text`/`-m`,
+    `--attach`/`-a`, `--links`, `--refresh-names`) — send messages, thread
+    replies, and local file attachments (supports positional text, `--text`, or
+    piped stdin while preserving native Chat markup).
+  - `chat edit <messageId|URL> [text]` (`--space`, `--text`/`-m`, `--links`,
+    `--refresh-names`) — update a message's text body while preserving existing
+    attachments.
+  - `chat delete <messageId|URL>` (`--space`, `--yes`/`-y`) — delete a message
+    with interactive confirmation unless `--yes` is provided.
+  - `chat react <messageId|URL> <emoji>` (`--space`, `--remove`) — add or
+    remove Unicode emoji reactions on a message.
+
+### Changed
+
+- Decoupled `gsvc chat message --download` from `internal/service/drive`:
+  Chat-hosted media continues to download via the Chat Media API, while
+  `DRIVE_FILE` attachments now emit an actionable
+  `gsvc drive download <driveFileId>` command hint instead of invoking the Drive
+  client directly.
+- Refactored the Chat query engine and message action commands into focused
+  responsibility-based files.
+
 ## [v2.0.5] - 2026-08-19
 
 ### Added
@@ -181,7 +231,8 @@ First release.
 - Global flags: `--profile`, `--output`/`-o`, `--verbose`.
 - Build-time version injection surfaced by `gsvc version`.
 
-[Unreleased]: https://github.com/bennv14/google_service_cli/compare/v2.0.5...HEAD
+[Unreleased]: https://github.com/bennv14/google_service_cli/compare/v3.0.1...HEAD
+[v3.0.1]: https://github.com/bennv14/google_service_cli/compare/v2.0.5...v3.0.1
 [v2.0.5]: https://github.com/bennv14/google_service_cli/compare/v2.0.4...v2.0.5
 [v2.0.4]: https://github.com/bennv14/google_service_cli/compare/v2.0.3...v2.0.4
 [v2.0.3]: https://github.com/bennv14/google_service_cli/compare/v2.0.2...v2.0.3
