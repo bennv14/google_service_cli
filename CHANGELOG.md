@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v3.1.0] - 2026-11-26
+
+### Added
+
+- **Version flags (`-v` / `--version`)**: print the local CLI version, commit,
+  and build date immediately without making network requests.
+- **GitHub Releases update check (`gsvc version`)**:
+  - Checks the latest published GitHub Release by default (3s timeout) and
+    reports whether an update is available, up to date, or a dev build.
+  - Supports `--no-check` and `GSVC_NO_UPDATE_CHECK=1` to skip remote checks.
+  - Supports `-o text` (default), `-o table`, and `-o json` with non-fatal
+    offline/rate-limit warnings routed to `stderr` so JSON `stdout` stays valid.
+  - Detects Homebrew installations (`Caskroom/gsvc/` or `Cellar/gsvc/`) to show
+    the `brew upgrade gsvc` hint only when applicable.
+- **Documentation**: updated `README.md` and `USAGE.md` for Chat write commands,
+  Google Sheets commands, and version/update checking.
+
 ## [v3.0.1] - 2026-11-15
 
 ### Breaking changes
@@ -231,7 +248,8 @@ First release.
 - Global flags: `--profile`, `--output`/`-o`, `--verbose`.
 - Build-time version injection surfaced by `gsvc version`.
 
-[Unreleased]: https://github.com/bennv14/google_service_cli/compare/v3.0.1...HEAD
+[Unreleased]: https://github.com/bennv14/google_service_cli/compare/v3.1.0...HEAD
+[v3.1.0]: https://github.com/bennv14/google_service_cli/compare/v3.0.1...v3.1.0
 [v3.0.1]: https://github.com/bennv14/google_service_cli/compare/v2.0.5...v3.0.1
 [v2.0.5]: https://github.com/bennv14/google_service_cli/compare/v2.0.4...v2.0.5
 [v2.0.4]: https://github.com/bennv14/google_service_cli/compare/v2.0.3...v2.0.4
