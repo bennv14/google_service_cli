@@ -121,6 +121,7 @@ func (textOnly) Text(w io.Writer) error {
 func TestOutputExplicitFlagWiring(t *testing.T) {
 	t.Run("unset", func(t *testing.T) {
 		t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+		t.Setenv("GSVC_NO_UPDATE_CHECK", "1")
 		root, deps := buildRootCmdWithDeps()
 		var buf bytes.Buffer
 		root.SetOut(&buf)
@@ -138,6 +139,7 @@ func TestOutputExplicitFlagWiring(t *testing.T) {
 
 	t.Run("set", func(t *testing.T) {
 		t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+		t.Setenv("GSVC_NO_UPDATE_CHECK", "1")
 		root, deps := buildRootCmdWithDeps()
 		var buf bytes.Buffer
 		root.SetOut(&buf)

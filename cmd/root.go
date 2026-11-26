@@ -68,6 +68,7 @@ func buildRootCmdWithDeps() (*cobra.Command, *service.Deps) {
 		Short: "A CLI for interacting with Google services",
 		Long: `gsvc is a command line tool for interacting with
 various Google services (Drive, Sheets, Gmail, ...).`,
+		Version:       versionString(),
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
@@ -75,13 +76,14 @@ various Google services (Drive, Sheets, Gmail, ...).`,
 			return populateDeps(deps, profileFlag, outputFlag, explicit, cmd.OutOrStdout())
 		},
 	}
+	root.SetVersionTemplate("{{.Version}}\n")
 
 	root.PersistentFlags().StringVar(&profileFlag, "profile", "", "profile to use (default: active profile)")
 	root.PersistentFlags().StringVarP(&outputFlag, "output", "o", "table", "output format: table | json | text")
 	root.PersistentFlags().BoolVar(&verboseFlag, "verbose", false, "verbose error output")
 
 	// Shared commands.
-	root.AddCommand(newVersionCmd())
+	root.AddCommand(newVersionCmd(deps))
 	root.AddCommand(newAuthCmd(deps))
 	root.AddCommand(newConfigCmd(deps))
 
