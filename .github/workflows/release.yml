@@ -31,15 +31,16 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.merge_commit_sha || github.ref }}
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
+          cache: false
 
       - name: Run vet and tests
         run: |
@@ -92,11 +93,84 @@ jobs:
             git push origin "refs/tags/${TAG}"
           fi
 
+          echo "RELEASE_TAG=${TAG}" >> "$GITHUB_ENV"
+
       - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@v6
+        uses: goreleaser/goreleaser-action@v7
         with:
           version: "~> v2"
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Publish release to homebrew-tap
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+          TAP_REPO: bennv14/homebrew-tap
+        run: |
+          set -euo pipefail
+
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::error::HOMEBREW_TAP_GITHUB_TOKEN secret is required to publish a release to ${TAP_REPO}"
+            exit 1
+          fi
+
+          TAG="${RELEASE_TAG:-${GITHUB_REF_NAME:-}}"
+          if [ -z "$TAG" ] || [[ "$TAG" != v* ]]; then
+            TAG="$(git describe --tags --exact-match HEAD)"
+          fi
+
+          TAP_TAG="gsvc-${TAG}"
+
+          shopt -s nullglob
+          ASSETS=(dist/gsvc_*.tar.gz dist/gsvc_*.zip dist/checksums.txt)
+          if [ "${#ASSETS[@]}" -eq 0 ]; then
+            echo "::error::No release assets found in dist/"
+            exit 1
+          fi
+
+          NOTES_FILE="$(mktemp)"
+          trap 'rm -f "$NOTES_FILE"' EXIT
+
+          if [ -f CHANGELOG.md ]; then
+            awk -v tag="$TAG" '
+              index($0, "## [" tag "]") == 1 { in_section=1; next }
+              in_section && /^## \[/ { exit }
+              in_section { print }
+            ' CHANGELOG.md > "$NOTES_FILE"
+          fi
+
+          if [ ! -s "$NOTES_FILE" ] || ! grep -q '[^[:space:]]' "$NOTES_FILE"; then
+            GH_TOKEN="$GITHUB_TOKEN" gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json body --jq '.body // ""' > "$NOTES_FILE" || true
+          fi
+
+          {
+            echo ""
+            echo "Upstream release: https://github.com/${GITHUB_REPOSITORY}/releases/tag/${TAG}"
+          } >> "$NOTES_FILE"
+
+          if gh release view "$TAP_TAG" --repo "$TAP_REPO" >/dev/null 2>&1; then
+            echo "Release ${TAP_TAG} already exists in ${TAP_REPO}; updating notes and assets."
+            gh release edit "$TAP_TAG" \
+              --repo "$TAP_REPO" \
+              --title "gsvc ${TAG}" \
+              --notes-file "$NOTES_FILE"
+            gh release upload "$TAP_TAG" "${ASSETS[@]}" \
+              --repo "$TAP_REPO" \
+              --clobber
+          else
+            CREATE_ARGS=(
+              "$TAP_TAG"
+              "${ASSETS[@]}"
+              --repo "$TAP_REPO"
+              --target main
+              --title "gsvc ${TAG}"
+              --notes-file "$NOTES_FILE"
+            )
+            if [[ "$TAG" == *-* ]]; then
+              CREATE_ARGS+=(--prerelease)
+            fi
+            gh release create "${CREATE_ARGS[@]}"
+          fi
