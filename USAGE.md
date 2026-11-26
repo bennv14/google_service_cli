@@ -42,10 +42,13 @@ cd google_service_cli
 make install     # builds into $(go env GOPATH)/bin/gsvc
 ```
 
-Verify the install:
+Verify the install and check for updates:
 
 ```bash
-gsvc version
+gsvc -v                       # instant local version (also: gsvc --version)
+gsvc version                  # local version + checks GitHub for newer releases
+gsvc version --no-check       # skip remote update check (or set GSVC_NO_UPDATE_CHECK=1)
+gsvc version -o json          # machine-readable JSON output
 ```
 
 ## Quick start
@@ -159,6 +162,7 @@ An expired token is not an error — it is refreshed on next use.
 
 | Flag | Description |
 | --- | --- |
+| `-v, --version` | Print the local version and exit (no network call) |
 | `--profile <name>` | Use this profile instead of the active one |
 | `-o, --output <format>` | `table`, `json`, or `text` |
 | `--verbose` | Verbose error output |
