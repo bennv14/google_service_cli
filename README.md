@@ -85,6 +85,7 @@ make test     # go test ./...
     ├── gclient/               # lazy authenticated HTTP client factory
     ├── gerr/                  # Google API error mapping
     ├── output/                # table / json / text writers
+    ├── version/               # semver comparison & GitHub release update check
     └── service/               # service registry
         ├── drive/             # Google Drive
         ├── chat/              # Google Chat
