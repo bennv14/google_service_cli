@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v3.1.1] - 2026-11-26
+
+### Changed
+
+- **Homebrew Cask post-install hook**: migrated deprecated
+  `homebrew_casks.hooks.post.install` (`postflight`) to Homebrew's declarative
+  `install_steps` (`postflight_steps`) in `.goreleaser.yaml`.
+- **Release CI workflow**: upgraded GitHub Actions (`actions/checkout@v7`,
+  `actions/setup-go@v7` with `cache: false`, `goreleaser/goreleaser-action@v7`)
+  for Node.js 24 support and cleaner release runs.
+
+### Added
+
+- **Homebrew tap mirror releases**: release automation now publishes a
+  `gsvc-vX.Y.Z` GitHub Release with build archives, `checksums.txt`, and
+  changelog notes to `bennv14/homebrew-tap`.
+
 ## [v3.1.0] - 2026-11-26
 
 ### Added
@@ -248,7 +265,8 @@ First release.
 - Global flags: `--profile`, `--output`/`-o`, `--verbose`.
 - Build-time version injection surfaced by `gsvc version`.
 
-[Unreleased]: https://github.com/bennv14/google_service_cli/compare/v3.1.0...HEAD
+[Unreleased]: https://github.com/bennv14/google_service_cli/compare/v3.1.1...HEAD
+[v3.1.1]: https://github.com/bennv14/google_service_cli/compare/v3.1.0...v3.1.1
 [v3.1.0]: https://github.com/bennv14/google_service_cli/compare/v3.0.1...v3.1.0
 [v3.0.1]: https://github.com/bennv14/google_service_cli/compare/v2.0.5...v3.0.1
 [v2.0.5]: https://github.com/bennv14/google_service_cli/compare/v2.0.4...v2.0.5
